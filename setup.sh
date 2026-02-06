@@ -91,6 +91,23 @@ fi
 
 cd ..
 
+# Install CLI tool
+echo -e "\n${YELLOW}Setting up CLI tool...${NC}"
+if [ -d "cli" ]; then
+    cd cli
+elif [ -d "cli-client" ]; then
+    cd cli-client
+else
+    echo -e "${YELLOW}⚠ CLI folder not found. Skipping CLI setup.${NC}"
+fi
+
+if [[ $(pwd) == *"cli"* ]]; then
+    npm install
+    npm link
+    echo -e "${GREEN}✓ CLI installed. You can use 'se2502' command.${NC}"
+    cd ..
+fi
+
 # Start backend in background and load demo data
 echo -e "\n${YELLOW}Starting backend temporarily to load demo data...${NC}"
 cd back-end

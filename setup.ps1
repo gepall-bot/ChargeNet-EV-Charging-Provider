@@ -114,6 +114,33 @@ if ((Get-Location).Path -match "cli") {
     Pop-Location
 }
 
+# 6. Load Demo Chargers
+Write-Host "`n[STEP 6] Loading demo charger data..." -ForegroundColor Yellow
+Push-Location back-end
+$backendJob = Start-Job -ScriptBlock { 
+    Set-Location $using:PWD
+    npm run dev 2>&1 | Out-Null
+}
+Start-Sleep -Seconds 8
+
+try {
+    $loginBody = '{"email":"admin@ev.local","password":"admin123"}'
+    $loginResponse = Invoke-RestMethod -Uri "http://localhost:9876/api/v1/auth/signin" -Method POST -Body $loginBody -ContentType "application/json"
+    $token = $loginResponse.token
+
+    if ($token) {
+        $headers = @{ "Authorization" = "Bearer $token" }
+        $resetResponse = Invoke-RestMethod -Uri "http://localhost:9876/api/v1/admin/resetpoints" -Method POST -Headers $headers
+        Write-Host "[OK] Demo data loaded: $($resetResponse.message)" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[WARN] Could not load demo data automatically. Run 'se2502 resetpoints' later." -ForegroundColor Yellow
+}
+
+Stop-Job -Job $backendJob -ErrorAction SilentlyContinue
+Remove-Job -Job $backendJob -ErrorAction SilentlyContinue
+Pop-Location
+
 # Final Output
 Write-Host "`n========================================" -ForegroundColor Green
 Write-Host "       SETUP COMPLETE SUCCESSFULLY      " -ForegroundColor Green
