@@ -83,6 +83,7 @@ if [ ! -f .env.local ]; then
     echo -e "\n${YELLOW}Creating frontend .env.local file...${NC}"
     cat > .env.local << EOF
 NEXT_PUBLIC_API_URL=http://localhost:9876/api/v1
+NEXT_PUBLIC_WEB3FORMS_KEY=d8086a1c-b517-4ada-b228-856ac4495cff
 EOF
     echo -e "${GREEN}✓ Frontend .env.local created${NC}"
 else
