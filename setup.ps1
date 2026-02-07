@@ -89,6 +89,7 @@ if (-not (Test-Path .env.local)) {
     Write-Host "       Creating .env.local file..."
     @"
 NEXT_PUBLIC_API_URL=http://localhost:9876/api/v1
+NEXT_PUBLIC_WEB3FORMS_KEY=d8086a1c-b517-4ada-b228-856ac4495cff
 "@ | Out-File -FilePath .env.local -Encoding UTF8
     Write-Host "[OK] Frontend .env.local created." -ForegroundColor Green
 } else {
