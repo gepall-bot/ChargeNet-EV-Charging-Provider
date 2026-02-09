@@ -10,46 +10,60 @@ import {
   CheckCircle,
   DollarSign,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { fetchCharger, isLoggedIn } from "../utils/api";
-import type { CompleteSessionPayload, CompleteSessionResponse } from "../utils/api";
 import type { Charger } from "../types/charger";
 import { CartoonCar } from "./ui/CartoonCar";
-
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "./ui/dialog";
 
 import { useUserVehicles } from "../hooks/useUserVehicles";
 import type { Vehicle } from "../utils/vehicleMapper";
 
+interface ChargingStatusData {
+  kWh: number;
+  costSoFar: number;
+  elapsedSeconds: number;
+  maxKW: number;
+  maxKWh?: number | null;
+  pricePerKWh: number;
+  status: string;
+}
+
 interface ChargerDetailsProps {
   charger: Charger;
   onClose: () => void;
+
   // reservation actions
   onReserve: (chargerId: string, minutes?: number) => void;
   onCancel: (chargerId: string) => void;
-  onCompleteSession: (payload: CompleteSessionPayload) => Promise<CompleteSessionResponse>;
 
   // reservation state from parent
   isReserved: boolean;
   isReserving: boolean;
   hasActiveReservation: boolean;
-  isCompletingSession: boolean;
 
   // error state from parent
   error: string | null;
   onErrorClose: () => void;
 
-  // timer related
-  lastReservationDuration: number;
-  lastReservationStartTime: number | null;
+  // timer related (teammate version)
+  lastReservationDuration: number; // seconds
+  lastReservationStartTime: number | null; // ms epoch
+
+  // charging session state
+  activeReservationId?: number | null;
+  activeSessionId?: number | null;
+  chargingStatus?: ChargingStatusData | null;
+  onStartCharging?: (reservationId: number, battery?: { batteryCapacityKWh: number; currentBatteryLevel: number }) => void;
+  onStopCharging?: (sessionId: number) => void;
+
+  // cluster navigation
+  clusterIndex?: number | null;
+  clusterCount?: number | null;
+  onPrevCharger?: () => void;
+  onNextCharger?: () => void;
 }
 
 export function ChargerDetails({
@@ -57,21 +71,30 @@ export function ChargerDetails({
   onClose,
   onReserve,
   onCancel,
-  onCompleteSession,
   isReserved,
   isReserving,
   hasActiveReservation,
-  isCompletingSession,
   error,
   onErrorClose,
   lastReservationDuration,
   lastReservationStartTime,
+
+  // charging
+  activeReservationId = null,
+  activeSessionId = null,
+  chargingStatus = null,
+  onStartCharging,
+  onStopCharging,
+
+  // cluster nav
+  clusterIndex = null,
+  clusterCount = null,
+  onPrevCharger,
+  onNextCharger,
 }: ChargerDetailsProps) {
   const router = useRouter();
-
   const [timeRemaining, setTimeRemaining] = useState(0);
 
-  // Logic για τα οχήματα (από main)
   const {
     vehicles,
     loading: vehiclesLoading,
@@ -102,9 +125,7 @@ export function ChargerDetails({
 
   // Reset timer when reservation is cancelled or charger changes
   useEffect(() => {
-    if (!isReserved) {
-      setTimeRemaining(0);
-    }
+    if (!isReserved) setTimeRemaining(0);
   }, [isReserved, charger.id]);
 
   const formatTime = (seconds: number) => {
@@ -166,7 +187,6 @@ export function ChargerDetails({
     }
   };
 
-  // Εδώ συνδυάζουμε τα props για το Mobile και το Desktop view
   const contentProps = {
     charger,
     timeRemaining,
@@ -195,6 +215,11 @@ export function ChargerDetails({
     lastReservationStartTime,
     goToProfile: () => router.push("/profile"),
     goToSignIn: () => router.push("/signin"),
+    activeReservationId,
+    activeSessionId,
+    chargingStatus,
+    onStartCharging,
+    onStopCharging,
   };
 
   return (
@@ -202,7 +227,14 @@ export function ChargerDetails({
       {/* Mobile */}
       <div className="md:hidden absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-2xl z-[1000] max-h-[75vh] overflow-y-auto">
         <div className="p-4 sm:p-6">
-          <Header title={charger.name ?? "Charger"} onClose={onClose} />
+          <Header
+            title={charger.name ?? "Charger"}
+            onClose={onClose}
+            clusterIndex={clusterIndex}
+            clusterCount={clusterCount}
+            onPrev={onPrevCharger}
+            onNext={onNextCharger}
+          />
           <ChargerContent {...contentProps} />
         </div>
       </div>
@@ -210,25 +242,75 @@ export function ChargerDetails({
       {/* Desktop */}
       <div className="hidden md:block absolute top-4 left-4 bg-white rounded-lg shadow-2xl z-[1000] w-96 max-h-[calc(100vh-2rem)] overflow-y-auto">
         <div className="p-6">
-          <Header title={charger.name ?? "Charger"} onClose={onClose} />
-          <ChargerContent {...contentProps} />
-        </div>
-      </div>
+          <Header
+            title={charger.name ?? "Charger"}
     </>
   );
 }
 
-function Header({ title, onClose }: { title: string; onClose: () => void }) {
+function Header({
+  title,
+  onClose,
+  clusterIndex,
+  clusterCount,
+  onPrev,
+  onNext,
+}: {
+  title: string;
+  onClose: () => void;
+  clusterIndex?: number | null;
+  clusterCount?: number | null;
+  onPrev?: () => void;
+  onNext?: () => void;
+}) {
+  const inCluster =
+    typeof clusterIndex === "number" && typeof clusterCount === "number" && clusterCount > 1;
+
   return (
-    <div className="flex justify-between items-start mb-4">
-      <h2 className="text-xl">{title}</h2>
-      <button
-        type="button"
-        onClick={onClose}
-        className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-      >
-        <X className="w-5 h-5" />
-      </button>
+    <div className="flex justify-between items-start mb-4 gap-3">
+      <div className="min-w-0">
+        <h2 className="text-xl truncate">{title}</h2>
+
+        {inCluster && (
+          <div className="mt-1 flex items-center gap-2 text-sm text-gray-500">
+            <span>
+              Charger {clusterIndex! + 1} of {clusterCount}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1">
+        {inCluster && (
+          <>
+            <button
+              type="button"
+              onClick={onPrev}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              aria-label="Previous charger"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              onClick={onNext}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              aria-label="Next charger"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </>
+        )}
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+          aria-label="Close"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -243,11 +325,9 @@ interface ChargerContentProps {
   connectorLabel: (t?: Charger["connectorType"]) => string;
   onReserve: (chargerId: string, minutes?: number) => void;
   onCancel: (chargerId: string) => void;
-  onCompleteSession: (payload: CompleteSessionPayload) => Promise<CompleteSessionResponse>;
   isReserved: boolean;
   isReserving: boolean;
   hasActiveReservation: boolean;
-  isCompletingSession: boolean;
   error: string | null;
   onErrorClose: () => void;
   vehicles: Vehicle[];
@@ -261,17 +341,12 @@ interface ChargerContentProps {
   lastReservationStartTime: number | null;
   goToProfile: () => void;
   goToSignIn: () => void;
+  activeReservationId?: number | null;
+  activeSessionId?: number | null;
+  chargingStatus?: ChargingStatusData | null;
+  onStartCharging?: (reservationId: number, battery?: { batteryCapacityKWh: number; currentBatteryLevel: number }) => void;
+  onStopCharging?: (sessionId: number) => void;
 }
-
-type SessionFormState = {
-  starttime: string;
-  endtime: string;
-  startsoc: number | null;
-  endsoc: number | null;
-  totalkwh: number;
-  kwhprice: number;
-  amount: number;
-};
 
 function ChargerContent({
   charger,
@@ -283,11 +358,9 @@ function ChargerContent({
   connectorLabel,
   onReserve,
   onCancel,
-  onCompleteSession,
   isReserved,
   isReserving,
   hasActiveReservation,
-  isCompletingSession,
   error,
   onErrorClose,
   vehicles,
@@ -301,16 +374,17 @@ function ChargerContent({
   lastReservationStartTime,
   goToProfile,
   goToSignIn,
+  activeReservationId,
+  activeSessionId,
+  chargingStatus,
+  onStartCharging,
+  onStopCharging,
 }: ChargerContentProps) {
-  // State για το μενού οχημάτων
   const [showVehicleMenu, setShowVehicleMenu] = useState(false);
 
 <<<<<<< Updated upstream
   const price = typeof charger.kwhprice === "number" ? charger.kwhprice : 0;
 
-  // reservation UI state
-=======
->>>>>>> Stashed changes
   const [reservationEndTime, setReservationEndTime] = useState<string | null>(null);
   const [showDurationPicker, setShowDurationPicker] = useState(false);
   const [selectedMinutes, setSelectedMinutes] = useState<number>(30);
@@ -318,30 +392,24 @@ function ChargerContent({
   const isGuest = notLoggedIn || !isLoggedIn();
   const reserveDisabled = isGuest || isReserved || isReserving || hasActiveReservation;
 
-// Close the dropdown if selection changes or vehicles refresh
   useEffect(() => {
     setShowVehicleMenu(false);
   }, [selectedVehicle?.id, vehicles.length]);
 
-  // Fetch reservation end time (non-fatal if it fails)
   useEffect(() => {
     let mounted = true;
 
     async function loadDetails() {
       try {
         const data = await fetchCharger(String(charger.id));
-        if (mounted && data?.reservationendtime) {
-          setReservationEndTime(String(data.reservationendtime));
-        } else if (mounted) {
-          setReservationEndTime(null);
-        }
+        if (mounted && data?.reservationendtime) setReservationEndTime(String(data.reservationendtime));
+        else if (mounted) setReservationEndTime(null);
       } catch {
-        // ignore - non-fatal
+        // ignore
       }
     }
 
     loadDetails();
-
     return () => {
       mounted = false;
     };
@@ -492,13 +560,11 @@ function ChargerContent({
 
   return (
     <div className="space-y-4">
-      {/* Status */}
       <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-full ${getStatusColor()}`}>
         {getStatusIcon()}
         <span>{getStatusText()}</span>
       </div>
 
-      {/* Vehicle / Estimates */}
       {charger.status === "available" && (
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 sm:p-4 space-y-3">
           {vehiclesLoading && <p className="text-sm text-gray-600">Loading your cars…</p>}
@@ -539,7 +605,6 @@ function ChargerContent({
                 <p className="text-sm text-gray-700">Selecting your car…</p>
               ) : (
                 <>
-                  {/* Title row is dropdown trigger */}
                   <div className="relative">
                     <button
                       type="button"
@@ -621,21 +686,9 @@ function ChargerContent({
 
                   {estimates && (
                     <div className="space-y-2 pt-2 border-t">
-                      <Row
-                        icon={<Clock className="w-4 h-4" />}
-                        label="Estimated Time"
-                        value={`${estimates.timeMinutes} min`}
-                      />
-                      <Row
-                        icon={<DollarSign className="w-4 h-4" />}
-                        label="Estimated Cost"
-                        value={`€${estimates.cost}`}
-                      />
-                      <Row
-                        icon={<Zap className="w-4 h-4" />}
-                        label={`To ${estimates.target}%`}
-                        value={`${estimates.energyNeeded} kWh`}
-                      />
+                      <Row icon={<Clock className="w-4 h-4" />} label="Estimated Time" value={`${estimates.timeMinutes} min`} />
+                      <Row icon={<DollarSign className="w-4 h-4" />} label="Estimated Cost" value={`€${estimates.cost}`} />
+                      <Row icon={<Zap className="w-4 h-4" />} label={`To ${estimates.target}%`} value={`${estimates.energyNeeded} kWh`} />
                     </div>
                   )}
                 </>
@@ -645,28 +698,102 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Address */}
-      <InfoRow
-        icon={<MapPin className="w-5 h-5 text-gray-400" />}
-        text={charger.address || "No address provided"}
-      />
+      <InfoRow icon={<MapPin className="w-5 h-5 text-gray-400" />} text={charger.address || "No address provided"} />
 
-      {/* Charger Details */}
       <InfoRow
         icon={<Zap className="w-5 h-5 text-gray-400" />}
         text={`${chargerPowerKW} kW • ${connectorLabel(charger.connectorType)}`}
       />
 
-      {/* Timer */}
-      {isReserved && (
-        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-          <p className="text-orange-900 mb-1">Estimated Time Remaining</p>
-          <p className="text-3xl text-orange-600">{formatTime(timeRemaining)}</p>
+      {/* Active charging session display */}
+      {activeSessionId && chargingStatus && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            {chargingStatus.status === "AUTO_STOPPED" ? (
+              <>
+                <CheckCircle className="w-5 h-5 text-green-600" />
+                <p className="text-green-900 font-medium">Battery Full — Charging Complete</p>
+              </>
+            ) : (
+              <>
+                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
+                <p className="text-green-900 font-medium">Charging in Progress</p>
+              </>
+            )}
+          </div>
+
+          {/* Battery progress bar */}
+          {chargingStatus.maxKWh && chargingStatus.maxKWh > 0 && (
+            <div>
+              <div className="flex justify-between text-xs text-gray-500 mb-1">
+                <span>{chargingStatus.kWh.toFixed(1)} kWh</span>
+                <span>{chargingStatus.maxKWh.toFixed(1)} kWh</span>
+              </div>
+              <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-green-500 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (chargingStatus.kWh / chargingStatus.maxKWh) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-sm text-gray-500">Energy</p>
+              <p className="text-2xl font-semibold text-gray-900">{chargingStatus.kWh.toFixed(2)} <span className="text-sm font-normal">kWh</span></p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Cost</p>
+              <p className="text-2xl font-semibold text-gray-900">&euro;{Math.max(chargingStatus.costSoFar, 3).toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Elapsed</p>
+              <p className="text-lg text-gray-900">{formatTime(chargingStatus.elapsedSeconds)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Power</p>
+              <p className="text-lg text-gray-900">{chargingStatus.maxKW} kW</p>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500">Min. charge: &euro;3.00 &bull; &euro;{chargingStatus.pricePerKWh.toFixed(2)}/kWh</p>
+
+          {chargingStatus.status !== "AUTO_STOPPED" && (
+            <button
+              type="button"
+              onClick={() => onStopCharging?.(activeSessionId)}
+              className="w-full py-3 rounded-lg bg-red-600 text-white hover:bg-red-700 active:bg-red-800 transition-colors font-medium"
+            >
+              Stop Charging
+            </button>
+          )}
         </div>
       )}
 
-      {/* Active reservation warning */}
-      {hasActiveReservation && !isReserved && (
+      {/* Reserved state with timer and start button */}
+      {isReserved && !activeSessionId && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 space-y-3">
+          <div>
+            <p className="text-orange-900 mb-1">Reservation Time Remaining</p>
+            <p className="text-3xl text-orange-600">{formatTime(timeRemaining)}</p>
+          </div>
+          {activeReservationId && onStartCharging && (
+            <button
+              type="button"
+              onClick={() => onStartCharging(activeReservationId, selectedVehicle ? {
+                batteryCapacityKWh: selectedVehicle.batteryCapacity,
+                currentBatteryLevel: selectedVehicle.currentBatteryLevel,
+              } : undefined)}
+              className="w-full py-3 rounded-lg bg-green-600 text-white hover:bg-green-700 active:bg-green-800 transition-colors font-medium flex items-center justify-center gap-2"
+            >
+              <Zap className="w-5 h-5" />
+              Start Charging
+            </button>
+          )}
+        </div>
+      )}
+
+      {hasActiveReservation && !isReserved && !activeSessionId && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-5 h-5 text-yellow-600" />
@@ -675,7 +802,6 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Error message */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <div className="flex items-start justify-between">
@@ -695,8 +821,7 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Reserve + Navigate */}
-      {(charger.status === "available" || isReserved) && (
+      {(charger.status === "available" || isReserved) && !activeSessionId && (
         <div className="space-y-2">
           {isGuest && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
@@ -710,6 +835,7 @@ function ChargerContent({
               </button>
             </div>
           )}
+
           <button
             type="button"
             onClick={() => setShowDurationPicker(true)}
@@ -752,22 +878,12 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Cancel button for user's reservation */}
-      {isReserved && (
-        <div className="pt-3 space-y-2">
-          <button
-            type="button"
-            onClick={() => setShowSessionModal(true)}
-            disabled={isCompletingSession}
-            className="w-full py-2 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {isCompletingSession ? "Processing..." : "Complete & Pay"}
-          </button>
-
+      {isReserved && !activeSessionId && (
+        <div className="pt-2">
           <button
             type="button"
             onClick={() => {
-              if (!confirm("Cancel your reservation?")) return;
+              if (!confirm("Cancel your reservation? The €3 hold will be released.")) return;
               onCancel(charger.id);
             }}
             className="w-full py-2 rounded-md bg-red-600 text-white"
@@ -778,10 +894,9 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Duration picker modal */}
       {showDurationPicker && (
         <>
-          {/* Mobile: centered modal */}
+          {/* Mobile */}
           <div className="md:hidden fixed inset-0 z-[1200] flex items-center justify-center">
             <div
               className="absolute inset-0 bg-black/40 backdrop-blur-sm"
@@ -823,7 +938,7 @@ function ChargerContent({
             </div>
           </div>
 
-          {/* Desktop: anchored */}
+          {/* Desktop */}
           <div className="hidden md:block absolute left-4 top-28 z-[1300]">
             <div className="bg-white rounded-xl p-4 w-80 shadow-2xl ring-1 ring-gray-100 border border-gray-200">
               <h3 className="text-lg font-medium mb-2">Select reservation duration</h3>
@@ -867,204 +982,6 @@ function ChargerContent({
         <div className="text-sm text-gray-600">Reservation ends: {reservationEndTime}</div>
       )}
 
-<<<<<<< Updated upstream
-      {/* Pricing */}
-=======
-      <Dialog open={showSessionModal} onOpenChange={handleModalOpenChange}>
-        <DialogContent className="max-w-xl">
-          {sessionModalMode === "success" && sessionResult ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>Charging session recorded</DialogTitle>
-                <DialogDescription>
-                  Payment status: {sessionResult.payment?.status ?? "pending"}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-900">
-                <p className="font-medium">Session #{sessionResult.session.id}</p>
-                <p className="mt-1">Energy delivered: {sessionResult.session.kWh.toFixed(2)} kWh</p>
-                <p>Amount charged: €{sessionResult.session.costEur.toFixed(2)}</p>
-                {sessionResult.payment?.id && (
-                  <p className="mt-1 text-xs text-green-800">Payment ref: {sessionResult.payment.id}</p>
-                )}
-              </div>
-              <DialogFooter>
-                <button
-                  type="button"
-                  onClick={() => handleModalOpenChange(false)}
-                  className="w-full rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700"
-                >
-                  Close
-                </button>
-              </DialogFooter>
-            </>
-          ) : (
-            <form
-              className="space-y-5"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void handleSessionSubmit();
-              }}
-            >
-              <DialogHeader>
-                <DialogTitle>Complete charging session</DialogTitle>
-                <DialogDescription>
-                  Capture the actual charging details so we can generate billing and release the charger.
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="session-start" className="text-sm font-medium text-gray-900">
-                    Start time
-                  </label>
-                  <input
-                    id="session-start"
-                    type="datetime-local"
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    value={sessionForm.starttime}
-                    onChange={(e) => updateForm({ starttime: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <label htmlFor="session-end" className="text-sm font-medium text-gray-900">
-                    End time
-                  </label>
-                  <input
-                    id="session-end"
-                    type="datetime-local"
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    value={sessionForm.endtime}
-                    onChange={(e) => updateForm({ endtime: e.target.value })}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="session-startsoc" className="text-sm font-medium text-gray-900">
-                    Start SoC (%)
-                  </label>
-                  <input
-                    id="session-startsoc"
-                    type="number"
-                    min={0}
-                    max={100}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    value={sessionForm.startsoc ?? ""}
-                    onChange={(e) =>
-                      updateForm({ startsoc: e.target.value === "" ? null : Number(e.target.value) })
-                    }
-                  />
-                </div>
-                <div>
-                  <label htmlFor="session-endsoc" className="text-sm font-medium text-gray-900">
-                    End SoC (%)
-                  </label>
-                  <input
-                    id="session-endsoc"
-                    type="number"
-                    min={0}
-                    max={100}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    value={sessionForm.endsoc ?? ""}
-                    onChange={(e) =>
-                      updateForm({ endsoc: e.target.value === "" ? null : Number(e.target.value) })
-                    }
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="session-energy" className="text-sm font-medium text-gray-900">
-                    Energy used (kWh)
-                  </label>
-                  <input
-                    id="session-energy"
-                    type="number"
-                    min={0}
-                    step={0.1}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    value={sessionForm.totalkwh}
-                    onChange={(e) => updateForm({ totalkwh: Number(e.target.value) || 0 })}
-                    required
-                  />
-                </div>
-                <div>
-                  <label htmlFor="session-price" className="text-sm font-medium text-gray-900">
-                    Price €/kWh
-                  </label>
-                  <input
-                    id="session-price"
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    value={sessionForm.kwhprice}
-                    onChange={(e) => updateForm({ kwhprice: Number(e.target.value) || 0 })}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="session-amount" className="text-sm font-medium text-gray-900">
-                  Total amount (€)
-                </label>
-                <div className="mt-1 flex gap-2">
-                  <input
-                    id="session-amount"
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    value={sessionForm.amount}
-                    onChange={(e) => updateForm({ amount: Number(e.target.value) || 0 })}
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={recalcAmount}
-                    className="whitespace-nowrap rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700"
-                  >
-                    Recalc
-                  </button>
-                </div>
-                <p className="mt-1 text-xs text-gray-500">Based on your energy × price. Adjust if you have exact receipt.</p>
-              </div>
-
-              {sessionModalError && (
-                <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {sessionModalError}
-                </div>
-              )}
-
-              <DialogFooter className="gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleModalOpenChange(false)}
-                  className="w-full rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700"
-                  disabled={isCompletingSession}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
-                  disabled={isCompletingSession}
-                >
-                  {isCompletingSession ? "Submitting..." : "Save & charge"}
-                </button>
-              </DialogFooter>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
-
->>>>>>> Stashed changes
       <div className="pt-4 border-t">
         <p className="text-sm text-gray-500">Pricing</p>
         <p className="text-gray-900">€{pricePerKwh.toFixed(2)}/kWh</p>

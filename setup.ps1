@@ -90,6 +90,7 @@ if (-not (Test-Path .env.local)) {
     @"
 NEXT_PUBLIC_API_URL=http://localhost:9876/api/v1
 NEXT_PUBLIC_WEB3FORMS_KEY=d8086a1c-b517-4ada-b228-856ac4495cff
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_51SoNW7Qo2CKKZoiNZPjJfkzPgvWeNPdyvuksD992vPJmR5lKSkZ7m6y4bWOxBSwO2nikVY1PyFN3F4W1kxhYXVJW00DH3CBRwO
 "@ | Out-File -FilePath .env.local -Encoding UTF8
     Write-Host "[OK] Frontend .env.local created." -ForegroundColor Green
 } else {
