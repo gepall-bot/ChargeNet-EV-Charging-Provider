@@ -75,6 +75,10 @@ Write-Host "       Seeding database..."
 npx prisma db seed
 Write-Host "[OK] Database seeded (Admin user created)." -ForegroundColor Green
 
+Write-Host "       Seeding car models..."
+npx tsx src/scripts/seedCars.ts
+Write-Host "[OK] Car models seeded." -ForegroundColor Green
+
 Pop-Location
 
 # 4. Frontend Setup

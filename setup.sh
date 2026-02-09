@@ -69,6 +69,11 @@ echo -e "\n${YELLOW}Seeding database (creating admin user)...${NC}"
 npx prisma db seed
 echo -e "${GREEN}✓ Database seeded${NC}"
 
+# Seed car models from CSV
+echo -e "\n${YELLOW}Seeding car models...${NC}"
+npx tsx src/scripts/seedCars.ts
+echo -e "${GREEN}✓ Car models seeded${NC}"
+
 # Go back to root
 cd ..
 

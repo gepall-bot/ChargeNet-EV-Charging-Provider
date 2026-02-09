@@ -243,7 +243,36 @@ export async function fetchCharger(id: string) {
  * Authenticated endpoints
  * --------------------------*/
 
+export async function fetchCarBrands(): Promise<string[]> {
+  const baseUrl = getBaseUrl();
+  const res = await fetch(`${baseUrl}/cars/brands`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch brands (${res.status})`);
+  return res.json();
+}
+
+export async function fetchCarModels(brand: string): Promise<string[]> {
+  const baseUrl = getBaseUrl();
+  const res = await fetch(`${baseUrl}/cars/models?brand=${encodeURIComponent(brand)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch models (${res.status})`);
+  return res.json();
+}
+
 export async function fetchCarOwnerships() {
-  // adjust if your backend is /api/v1/car-ownership etc.
   return fetchJson(`/car-ownership`, { auth: true });
+}
+
+export async function searchCars(query: string) {
+  const baseUrl = getBaseUrl();
+  const res = await fetch(`${baseUrl}/cars/search?q=${encodeURIComponent(query)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to search cars (${res.status})`);
+  return res.json();
+}
+
+export async function addCarOwnership(carId: number, color: string) {
+  return fetchJson(`/car-ownership/${carId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ color }),
+    auth: true,
+  });
 }

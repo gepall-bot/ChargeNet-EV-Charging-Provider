@@ -1,11 +1,12 @@
 "use client";
 import { SideMenu } from '../../components/SideMenu';
 import { MenuPanel } from '../../components/MenuPanel';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { fetchCarBrands, fetchCarModels, fetchCarOwnerships, searchCars, addCarOwnership } from '../../utils/api';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
-import { Plus, Trash2, Edit2, Check, X, Menu } from 'lucide-react';
+import { Plus, Trash2, Menu, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -15,71 +16,188 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 
+const CAR_COLORS = [
+  { value: 'RED', label: 'Red', hex: '#EF4444' },
+  { value: 'BLUE', label: 'Blue', hex: '#3B82F6' },
+  { value: 'YELLOW', label: 'Yellow', hex: '#EAB308' },
+  { value: 'WHITE', label: 'White', hex: '#F9FAFB' },
+  { value: 'BLACK', label: 'Black', hex: '#1F2937' },
+  { value: 'SILVER', label: 'Silver', hex: '#9CA3AF' },
+  { value: 'GREY', label: 'Grey', hex: '#6B7280' },
+  { value: 'GREEN', label: 'Green', hex: '#22C55E' },
+  { value: 'ORANGE', label: 'Orange', hex: '#F97316' },
+  { value: 'PURPLE', label: 'Purple', hex: '#A855F7' },
+] as const;
+
 interface Vehicle {
-  id: string;
+  ownershipId: number;
+  carId: number;
   brand: string;
   model: string;
-  year: string;
-  batteryCapacity: string;
-  maxChargingSpeed: string;
+  variant: string | null;
+  color: string;
+  usableBatteryKWh: number;
+  dcMaxKW: number;
+  acMaxKW: number;
+}
+
+function mapOwnershipToVehicle(o: any): Vehicle {
+  return {
+    ownershipId: o.id,
+    carId: o.carId,
+    brand: o.car.brand,
+    model: o.car.model,
+    variant: o.car.variant ?? null,
+    color: o.color,
+    usableBatteryKWh: o.car.usableBatteryKWh,
+    dcMaxKW: o.car.dcMaxKW,
+    acMaxKW: o.car.acMaxKW,
+  };
+}
+
+function getColorHex(colorValue: string): string {
+  return CAR_COLORS.find((c) => c.value === colorValue)?.hex ?? '#9CA3AF';
+}
+
+function getColorLabel(colorValue: string): string {
+  return CAR_COLORS.find((c) => c.value === colorValue)?.label ?? colorValue;
 }
 
 export default function VehiclesScreen() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [vehicles, setVehicles] = useState<Vehicle[]>([
-    {
-      id: '1',
-      brand: 'Tesla',
-      model: 'Model 3',
-      year: '2023',
-      batteryCapacity: '75',
-      maxChargingSpeed: '250',
-    },
-    {
-      id: '2',
-      brand: 'Chevrolet',
-      model: 'Bolt EV',
-      year: '2022',
-      batteryCapacity: '65',
-      maxChargingSpeed: '55',
-    },
-  ]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [newVehicle, setNewVehicle] = useState<Omit<Vehicle, 'id'>>({
-    brand: '',
-    model: '',
-    year: '',
-    batteryCapacity: '',
-    maxChargingSpeed: '',
-  });
+  const [addError, setAddError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
-  const handleAddVehicle = () => {
-    if (newVehicle.brand && newVehicle.model) {
-      const vehicle: Vehicle = {
-        id: Date.now().toString(),
-        ...newVehicle,
-      };
-      setVehicles([...vehicles, vehicle]);
-      setNewVehicle({
-        brand: '',
-        model: '',
-        year: '',
-        batteryCapacity: '',
-        maxChargingSpeed: '',
-      });
+  // Brand search dropdown state
+  const [allBrands, setAllBrands] = useState<string[]>([]);
+  const [brandQuery, setBrandQuery] = useState('');
+  const [selectedBrand, setSelectedBrand] = useState('');
+  const [isBrandDropdownOpen, setIsBrandDropdownOpen] = useState(false);
+  const brandRef = useRef<HTMLDivElement>(null);
+
+  // Model search dropdown state
+  const [allModels, setAllModels] = useState<string[]>([]);
+  const [modelQuery, setModelQuery] = useState('');
+  const [selectedModel, setSelectedModel] = useState('');
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const modelRef = useRef<HTMLDivElement>(null);
+
+  // Color state
+  const [selectedColor, setSelectedColor] = useState('WHITE');
+
+  // Load existing vehicles from backend
+  useEffect(() => {
+    fetchCarOwnerships()
+      .then((data: any[]) => {
+        setVehicles(data.map(mapOwnershipToVehicle));
+      })
+      .catch((err) => {
+        console.error('Failed to load vehicles:', err);
+        setError('Failed to load your vehicles. Please sign in and try again.');
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Fetch brands
+  useEffect(() => {
+    fetchCarBrands()
+      .then(setAllBrands)
+      .catch((err) => console.error('Failed to fetch brands:', err));
+  }, []);
+
+  // Close brand dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (brandRef.current && !brandRef.current.contains(e.target as Node)) {
+        setIsBrandDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredBrands = allBrands.filter((b) =>
+    b.toLowerCase().startsWith(brandQuery.toLowerCase())
+  );
+
+  // Fetch models when brand is selected
+  useEffect(() => {
+    if (!selectedBrand) {
+      setAllModels([]);
+      setModelQuery('');
+      setSelectedModel('');
+      return;
+    }
+    fetchCarModels(selectedBrand)
+      .then(setAllModels)
+      .catch((err) => console.error('Failed to fetch models:', err));
+  }, [selectedBrand]);
+
+  // Close model dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (modelRef.current && !modelRef.current.contains(e.target as Node)) {
+        setIsModelDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredModels = allModels.filter((m) =>
+    m.toLowerCase().startsWith(modelQuery.toLowerCase())
+  );
+
+  const resetAddForm = () => {
+    setBrandQuery('');
+    setSelectedBrand('');
+    setModelQuery('');
+    setSelectedModel('');
+    setSelectedColor('WHITE');
+    setAddError(null);
+  };
+
+  const handleAddVehicle = async () => {
+    if (!selectedBrand || !selectedModel) return;
+
+    setAdding(true);
+    setAddError(null);
+
+    try {
+      // Search by brand to get car IDs, then match the exact model
+      const cars = await searchCars(selectedBrand);
+      const match = cars.find(
+        (c: any) =>
+          c.brand.toLowerCase() === selectedBrand.toLowerCase() &&
+          c.model.toLowerCase() === selectedModel.toLowerCase()
+      );
+
+      if (!match) {
+        setAddError('Could not find this car in our database.');
+        setAdding(false);
+        return;
+      }
+
+      const result = await addCarOwnership(match.id, selectedColor);
+      const newVehicle = mapOwnershipToVehicle(result.ownership);
+      setVehicles((prev) => [newVehicle, ...prev]);
+      resetAddForm();
       setIsAddDialogOpen(false);
+    } catch (err: any) {
+      setAddError(err.message || 'Failed to add vehicle.');
+    } finally {
+      setAdding(false);
     }
   };
 
-  const handleRemoveVehicle = (id: string) => {
-    setVehicles(vehicles.filter((v) => v.id !== id));
-  };
-
-  const handleUpdateVehicle = (id: string, updatedVehicle: Vehicle) => {
-    setVehicles(vehicles.map((v) => (v.id === id ? updatedVehicle : v)));
-    setEditingId(null);
+  const handleRemoveVehicle = (ownershipId: number) => {
+    // Remove locally (no backend delete endpoint yet)
+    setVehicles((prev) => prev.filter((v) => v.ownershipId !== ownershipId));
   };
 
   return (
@@ -101,16 +219,26 @@ export default function VehiclesScreen() {
               <h1 className="hidden sm:block text-2xl sm:text-3xl text-gray-900 mb-2">Vehicles</h1>
               <p className="text-sm text-gray-500">Manage your electric vehicles</p>
             </div>
-            <Button onClick={() => setIsAddDialogOpen(true)}>
+            <Button onClick={() => { resetAddForm(); setIsAddDialogOpen(true); }}>
               <Plus className="w-4 h-4 mr-2" />
               Add Vehicle
             </Button>
           </div>
 
-          {vehicles.length === 0 ? (
+          {loading ? (
+            <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
+              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-gray-400" />
+              <p className="text-gray-500">Loading your vehicles...</p>
+            </div>
+          ) : error ? (
+            <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
+              <p className="text-red-500 mb-4">{error}</p>
+              <Button onClick={() => window.location.reload()}>Retry</Button>
+            </div>
+          ) : vehicles.length === 0 ? (
             <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
               <p className="text-gray-500 mb-4">No vehicles added yet</p>
-              <Button onClick={() => setIsAddDialogOpen(true)}>
+              <Button onClick={() => { resetAddForm(); setIsAddDialogOpen(true); }}>
                 <Plus className="w-4 h-4 mr-2" />
                 Add Your First Vehicle
               </Button>
@@ -119,13 +247,9 @@ export default function VehiclesScreen() {
             <div className="space-y-4">
               {vehicles.map((vehicle) => (
                 <VehicleCard
-                  key={vehicle.id}
+                  key={vehicle.ownershipId}
                   vehicle={vehicle}
-                  isEditing={editingId === vehicle.id}
-                  onEdit={() => setEditingId(vehicle.id)}
-                  onCancel={() => setEditingId(null)}
-                  onSave={(updated) => handleUpdateVehicle(vehicle.id, updated)}
-                  onRemove={() => handleRemoveVehicle(vehicle.id)}
+                  onRemove={() => handleRemoveVehicle(vehicle.ownershipId)}
                 />
               ))}
             </div>
@@ -144,76 +268,136 @@ export default function VehiclesScreen() {
           <DialogHeader>
             <DialogTitle>Add New Vehicle</DialogTitle>
             <DialogDescription>
-              Enter the details of your electric vehicle
+              Search for your electric vehicle and pick a color
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
-            <div>
+            {/* Brand */}
+            <div ref={brandRef} className="relative">
               <Label htmlFor="brand">Brand</Label>
               <Input
                 id="brand"
-                value={newVehicle.brand}
-                onChange={(e) => setNewVehicle({ ...newVehicle, brand: e.target.value })}
-                placeholder="e.g., Tesla, Chevrolet"
+                value={brandQuery}
+                onChange={(e) => {
+                  setBrandQuery(e.target.value);
+                  setSelectedBrand('');
+                  setSelectedModel('');
+                  setModelQuery('');
+                  setIsBrandDropdownOpen(true);
+                }}
+                onFocus={() => setIsBrandDropdownOpen(true)}
+                placeholder="Search brand..."
                 className="mt-1"
+                autoComplete="off"
               />
+              {isBrandDropdownOpen && filteredBrands.length > 0 && (
+                <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                  {filteredBrands.map((brand) => (
+                    <button
+                      key={brand}
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 text-gray-900"
+                      onClick={() => {
+                        setSelectedBrand(brand);
+                        setBrandQuery(brand);
+                        setSelectedModel('');
+                        setModelQuery('');
+                        setIsBrandDropdownOpen(false);
+                      }}
+                    >
+                      {brand}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <div>
+            {/* Model */}
+            <div ref={modelRef} className="relative">
               <Label htmlFor="model">Model</Label>
-              <Input
-                id="model"
-                value={newVehicle.model}
-                onChange={(e) => setNewVehicle({ ...newVehicle, model: e.target.value })}
-                placeholder="e.g., Model 3, Bolt EV"
-                className="mt-1"
-              />
+              {!selectedBrand ? (
+                <Input
+                  id="model"
+                  disabled
+                  placeholder="Choose a brand first"
+                  className="mt-1"
+                />
+              ) : (
+                <>
+                  <Input
+                    id="model"
+                    value={modelQuery}
+                    onChange={(e) => {
+                      setModelQuery(e.target.value);
+                      setSelectedModel('');
+                      setIsModelDropdownOpen(true);
+                    }}
+                    onFocus={() => setIsModelDropdownOpen(true)}
+                    placeholder="Search model..."
+                    className="mt-1"
+                    autoComplete="off"
+                  />
+                  {isModelDropdownOpen && filteredModels.length > 0 && (
+                    <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                      {filteredModels.map((model) => (
+                        <button
+                          key={model}
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 text-gray-900"
+                          onClick={() => {
+                            setSelectedModel(model);
+                            setModelQuery(model);
+                            setIsModelDropdownOpen(false);
+                          }}
+                        >
+                          {model}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
+            {/* Color picker */}
             <div>
-              <Label htmlFor="year">Year</Label>
-              <Input
-                id="year"
-                value={newVehicle.year}
-                onChange={(e) => setNewVehicle({ ...newVehicle, year: e.target.value })}
-                placeholder="e.g., 2023"
-                className="mt-1"
-              />
+              <Label>Color</Label>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {CAR_COLORS.map((color) => (
+                  <button
+                    key={color.value}
+                    type="button"
+                    title={color.label}
+                    className={`w-8 h-8 rounded-full border-2 transition-all ${
+                      selectedColor === color.value
+                        ? 'border-blue-500 scale-110 ring-2 ring-blue-200'
+                        : 'border-gray-300 hover:border-gray-400'
+                    }`}
+                    style={{ backgroundColor: color.hex }}
+                    onClick={() => setSelectedColor(color.value)}
+                  />
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-1">{getColorLabel(selectedColor)}</p>
             </div>
 
-            <div>
-              <Label htmlFor="batteryCapacity">Battery Capacity (kWh)</Label>
-              <Input
-                id="batteryCapacity"
-                value={newVehicle.batteryCapacity}
-                onChange={(e) =>
-                  setNewVehicle({ ...newVehicle, batteryCapacity: e.target.value })
-                }
-                placeholder="e.g., 75"
-                className="mt-1"
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="maxChargingSpeed">Max Charging Speed (kW)</Label>
-              <Input
-                id="maxChargingSpeed"
-                value={newVehicle.maxChargingSpeed}
-                onChange={(e) =>
-                  setNewVehicle({ ...newVehicle, maxChargingSpeed: e.target.value })
-                }
-                placeholder="e.g., 250"
-                className="mt-1"
-              />
-            </div>
+            {addError && (
+              <p className="text-sm text-red-500">{addError}</p>
+            )}
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleAddVehicle}>Add Vehicle</Button>
+            <Button
+              onClick={handleAddVehicle}
+              disabled={!selectedBrand || !selectedModel || adding}
+            >
+              {adding && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Add Vehicle
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -223,127 +407,45 @@ export default function VehiclesScreen() {
 
 interface VehicleCardProps {
   vehicle: Vehicle;
-  isEditing: boolean;
-  onEdit: () => void;
-  onCancel: () => void;
-  onSave: (vehicle: Vehicle) => void;
   onRemove: () => void;
 }
 
-function VehicleCard({
-  vehicle,
-  isEditing,
-  onEdit,
-  onCancel,
-  onSave,
-  onRemove,
-}: VehicleCardProps) {
-  const [editedVehicle, setEditedVehicle] = useState(vehicle);
-
-  const handleSave = () => {
-    onSave(editedVehicle);
-  };
-
-  if (isEditing) {
-    return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <Label htmlFor={`edit-brand-${vehicle.id}`}>Brand</Label>
-            <Input
-              id={`edit-brand-${vehicle.id}`}
-              value={editedVehicle.brand}
-              onChange={(e) => setEditedVehicle({ ...editedVehicle, brand: e.target.value })}
-              className="mt-1"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor={`edit-model-${vehicle.id}`}>Model</Label>
-            <Input
-              id={`edit-model-${vehicle.id}`}
-              value={editedVehicle.model}
-              onChange={(e) => setEditedVehicle({ ...editedVehicle, model: e.target.value })}
-              className="mt-1"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor={`edit-year-${vehicle.id}`}>Year</Label>
-            <Input
-              id={`edit-year-${vehicle.id}`}
-              value={editedVehicle.year}
-              onChange={(e) => setEditedVehicle({ ...editedVehicle, year: e.target.value })}
-              className="mt-1"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor={`edit-battery-${vehicle.id}`}>Battery Capacity (kWh)</Label>
-            <Input
-              id={`edit-battery-${vehicle.id}`}
-              value={editedVehicle.batteryCapacity}
-              onChange={(e) =>
-                setEditedVehicle({ ...editedVehicle, batteryCapacity: e.target.value })
-              }
-              className="mt-1"
-            />
-          </div>
-
-          <div className="md:col-span-2">
-            <Label htmlFor={`edit-charging-${vehicle.id}`}>Max Charging Speed (kW)</Label>
-            <Input
-              id={`edit-charging-${vehicle.id}`}
-              value={editedVehicle.maxChargingSpeed}
-              onChange={(e) =>
-                setEditedVehicle({ ...editedVehicle, maxChargingSpeed: e.target.value })
-              }
-              className="mt-1"
-            />
-          </div>
-        </div>
-
-        <div className="flex gap-2 mt-4">
-          <Button onClick={handleSave} size="sm">
-            <Check className="w-4 h-4 mr-2" />
-            Save
-          </Button>
-          <Button onClick={onCancel} variant="outline" size="sm">
-            <X className="w-4 h-4 mr-2" />
-            Cancel
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
+function VehicleCard({ vehicle, onRemove }: VehicleCardProps) {
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6">
       <div className="flex items-start justify-between mb-4">
-        <div>
-          <h3 className="text-lg font-medium text-gray-900">
-            {vehicle.brand} {vehicle.model}
-          </h3>
-          {vehicle.year && <p className="text-sm text-gray-500">{vehicle.year}</p>}
+        <div className="flex items-center gap-3">
+          <div
+            className="w-5 h-5 rounded-full border border-gray-300 flex-shrink-0"
+            style={{ backgroundColor: getColorHex(vehicle.color) }}
+            title={getColorLabel(vehicle.color)}
+          />
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">
+              {vehicle.brand} {vehicle.model}
+            </h3>
+            {vehicle.variant && (
+              <p className="text-sm text-gray-500">{vehicle.variant}</p>
+            )}
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={onEdit} variant="outline" size="sm">
-            <Edit2 className="w-4 h-4" />
-          </Button>
-          <Button onClick={onRemove} variant="outline" size="sm">
-            <Trash2 className="w-4 h-4 text-red-600" />
-          </Button>
-        </div>
+        <Button onClick={onRemove} variant="outline" size="sm">
+          <Trash2 className="w-4 h-4 text-red-600" />
+        </Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <div>
-          <p className="text-sm text-gray-500">Battery Capacity</p>
-          <p className="text-sm text-gray-900">{vehicle.batteryCapacity || 'N/A'} kWh</p>
+          <p className="text-sm text-gray-500">Battery</p>
+          <p className="text-sm text-gray-900">{vehicle.usableBatteryKWh} kWh</p>
         </div>
         <div>
-          <p className="text-sm text-gray-500">Max Charging Speed</p>
-          <p className="text-sm text-gray-900">{vehicle.maxChargingSpeed || 'N/A'} kW</p>
+          <p className="text-sm text-gray-500">DC Max</p>
+          <p className="text-sm text-gray-900">{vehicle.dcMaxKW} kW</p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500">AC Max</p>
+          <p className="text-sm text-gray-900">{vehicle.acMaxKW} kW</p>
         </div>
       </div>
     </div>
