@@ -13,7 +13,13 @@ import { ListView } from "./ListView";
 
 import { useUserLocation } from "../hooks/useUserLocation";
 import { useFetchChargers } from "../hooks/useFetchChargers";
-import { reserveCharger, cancelReservation } from "../utils/api";
+import {
+  reserveCharger,
+  cancelReservation,
+  completeChargingSession,
+  type CompleteSessionPayload,
+  type CompleteSessionResponse,
+} from "../utils/api";
 import type { Charger } from "../types/charger";
 
 function cartoPositronProvider(x: number, y: number, z: number) {
@@ -34,7 +40,21 @@ export function MapView() {
   const [lastReservationDuration, setLastReservationDuration] = useState<number>(0);
   const [lastReservationStartTime, setLastReservationStartTime] = useState<number | null>(null);
 
+<<<<<<< Updated upstream
   // Initialize reservation state from backend-provided flags
+=======
+  // ✅ Persisted timer state lives here (parent)
+  const [lastReservationDuration, setLastReservationDuration] = useState<number>(0); // seconds
+  const [lastReservationStartTime, setLastReservationStartTime] = useState<number | null>(null); // ms
+  const [isCompletingSession, setIsCompletingSession] = useState(false);
+
+  // Cluster navigation context
+  const [clusterContext, setClusterContext] = useState<{
+    ids: string[];
+    index: number;
+  } | null>(null);
+
+>>>>>>> Stashed changes
   useEffect(() => {
     if (!chargers || chargers.length === 0) {
       setReservedChargers(new Set());
@@ -160,7 +180,46 @@ export function MapView() {
     }
   };
 
+<<<<<<< Updated upstream
   // Keep the open details panel in sync with the latest charger data
+=======
+  const handleCompleteSession = async (
+    payload: CompleteSessionPayload,
+  ): Promise<CompleteSessionResponse> => {
+    setReservationError(null);
+    const chargerId = String(payload.pointid);
+    setIsCompletingSession(true);
+
+    try {
+      const result = await completeChargingSession({
+        ...payload,
+        pointid: chargerId,
+      });
+
+      setHasActiveReservation(false);
+      setLastReservationDuration(0);
+      setLastReservationStartTime(null);
+      setReservedChargers((prev) => {
+        const next = new Set(prev);
+        next.delete(chargerId);
+        return next;
+      });
+
+      const newList = await reload();
+      const updated = newList.find((c) => String(c.id) === chargerId) ?? null;
+      setSelectedCharger(updated);
+
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to complete session.";
+      setReservationError(message);
+      throw err;
+    } finally {
+      setIsCompletingSession(false);
+    }
+  };
+
+>>>>>>> Stashed changes
   useEffect(() => {
     if (!selectedCharger) return;
     const updated = chargers.find((c) => c.id === selectedCharger.id);
@@ -321,7 +380,16 @@ export function MapView() {
               charger={selectedCharger}
               onClose={() => setSelectedCharger(null)}
               onReserve={handleReserve}
+<<<<<<< Updated upstream
               isReserved={(selectedCharger as any).reserved_by_me ?? reservedChargers.has(selectedCharger.id)}
+=======
+              onCancel={handleCancel}
+              onCompleteSession={handleCompleteSession}
+              isReserved={
+                (selectedCharger as any).reserved_by_me ??
+                reservedChargers.has(String(selectedCharger.id))
+              }
+>>>>>>> Stashed changes
               isReserving={isReserving}
               hasActiveReservation={hasActiveReservation}
               error={reservationError}
@@ -329,6 +397,7 @@ export function MapView() {
               onCancel={handleCancel}
               lastReservationDuration={lastReservationDuration}
               lastReservationStartTime={lastReservationStartTime}
+              isCompletingSession={isCompletingSession}
             />
           )}
 

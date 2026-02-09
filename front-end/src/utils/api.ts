@@ -222,6 +222,49 @@ export async function cancelReservation(chargerId: string) {
   });
 }
 
+export type CompleteSessionPayload = {
+  pointid: string | number;
+  starttime: string;
+  endtime: string;
+  startsoc: number | null;
+  endsoc: number | null;
+  totalkwh: number;
+  kwhprice: number;
+  amount: number;
+};
+
+export type CompleteSessionResponse = {
+  session: {
+    id: number;
+    chargerId: number;
+    reservationId: number | null;
+    startedAt: string;
+    endedAt: string | null;
+    kWh: number;
+    pricePerKWh: number;
+    costEur: number;
+  };
+  payment: {
+    id?: string | null;
+    status: string;
+    amountEur?: number;
+    error?: string | null;
+  };
+  metrics: {
+    startsoc: number | null;
+    endsoc: number | null;
+  };
+};
+
+export async function completeChargingSession(payload: CompleteSessionPayload) {
+  return fetchJson(`/newsession`, {
+    method: "POST",
+    auth: true,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }) as Promise<CompleteSessionResponse>;
+}
+
 export async function fetchCharger(id: string) {
   // include auth if present so you can see reservationendtime if backend restricts it
   const token = getAuthToken();
