@@ -1,5 +1,6 @@
 "use client";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { CardElement, Elements, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
 import { CreditCard, FileText, Loader2, MapPin, Menu, Plus, Trash2, Zap } from 'lucide-react';
@@ -93,6 +94,7 @@ function formatAmount(amount: number | null | undefined) {
 }
 
 export default function BillingScreen() {
+  const router = useRouter();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [history, setHistory] = useState<BillingHistoryEntry[]>([]);
@@ -176,6 +178,30 @@ export default function BillingScreen() {
       setMockLoading(false);
     }
   }, [demoEnabled, mockAmount, mockChargerId, mockEnergy, loadData]);
+
+  const goToMockPayment = () => {
+    const params = new URLSearchParams();
+
+    const parsedChargerId = Number(mockChargerId);
+    const parsedAmount = Number(mockAmount);
+    const parsedEnergy = Number(mockEnergy);
+
+    if (Number.isFinite(parsedChargerId) && parsedChargerId > 0) {
+      params.set('chargerId', String(parsedChargerId));
+    }
+    if (Number.isFinite(parsedEnergy) && parsedEnergy > 0) {
+      params.set('kwh', String(parsedEnergy));
+    }
+
+    const price = Number.isFinite(parsedAmount) && Number.isFinite(parsedEnergy) && parsedEnergy > 0
+      ? parsedAmount / parsedEnergy
+      : undefined;
+    if (price && Number.isFinite(price)) {
+      params.set('pricePerKwh', price.toFixed(4));
+    }
+
+    router.push(`/payment?${params.toString()}`);
+  };
 
   const handleRemovePayment = async (id: number) => {
     setDeletingId(id);
@@ -294,8 +320,11 @@ export default function BillingScreen() {
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-3">
-                <Button onClick={triggerMockCharge} disabled={mockLoading}>
-                  {mockLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create mock session'}
+                <Button onClick={goToMockPayment} disabled={!demoEnabled}>
+                  Open payment screen
+                </Button>
+                <Button variant="secondary" onClick={triggerMockCharge} disabled={mockLoading}>
+                  {mockLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create mock session here'}
                 </Button>
                 <p className="text-xs text-blue-900">
                   Uses Stripe test token (tok_visa). Disabled automatically when NEXT_PUBLIC_ENABLE_MOCK_SESSION is not set.

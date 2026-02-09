@@ -342,6 +342,7 @@ function ChargerContent({
   goToProfile,
   goToSignIn,
 }: ChargerContentProps) {
+  const router = useRouter();
   const [showVehicleMenu, setShowVehicleMenu] = useState(false);
 
   const price = typeof charger.kwhprice === "number" ? charger.kwhprice : 0;
@@ -378,6 +379,7 @@ function ChargerContent({
 
   const chargerPowerKW = charger.maxKW ?? 0;
   const pricePerKwh = typeof charger.kwhprice === "number" ? charger.kwhprice : 0;
+  const mockSessionEnabled = process.env.NEXT_PUBLIC_ENABLE_MOCK_SESSION === "1";
 
   const estimates = useMemo(() => {
     if (!selectedVehicle || chargerPowerKW <= 0) return null;
@@ -397,6 +399,25 @@ function ChargerContent({
       target,
     };
   }, [selectedVehicle, chargerPowerKW, pricePerKwh]);
+
+  const goToMockPayment = () => {
+    if (!mockSessionEnabled) return;
+    if (isGuest) {
+      goToSignIn();
+      return;
+    }
+
+    const params = new URLSearchParams({
+      chargerId: String(charger.id),
+      pricePerKwh: pricePerKwh.toFixed(4),
+    });
+
+    if (estimates?.energyNeeded) params.set("kwh", String(estimates.energyNeeded));
+    if (charger.name) params.set("name", charger.name);
+    if (charger.address) params.set("address", charger.address);
+
+    router.push(`/payment?${params.toString()}`);
+  };
 
   return (
     <div className="space-y-4">
@@ -743,6 +764,16 @@ function ChargerContent({
       <div className="pt-4 border-t">
         <p className="text-sm text-gray-500">Pricing</p>
         <p className="text-gray-900">€{pricePerKwh.toFixed(2)}/kWh</p>
+
+        {mockSessionEnabled && (
+          <button
+            type="button"
+            onClick={goToMockPayment}
+            className="mt-3 w-full py-3 rounded-lg bg-gray-900 text-white hover:bg-black transition-colors"
+          >
+            Mock session checkout
+          </button>
+        )}
       </div>
     </div>
   );
