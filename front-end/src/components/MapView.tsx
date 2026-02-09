@@ -21,6 +21,96 @@ function cartoPositronProvider(x: number, y: number, z: number) {
   return `https://${sub}.basemaps.cartocdn.com/rastertiles/light_all/${z}/${x}/${y}.png`;
 }
 
+/** --- Cluster helpers --- */
+type Cluster = {
+  id: string;
+  lat: number;
+  lng: number;
+  members: Charger[];
+  count: number;
+  color: string;
+};
+
+const COORD_EPS = 1e-6; // treat as identical spot
+const CLUSTER_PX = 28; // how close is "same spot" in pixels (tweak 20–40)
+
+function latLngToPixel(lat: number, lng: number, zoom: number) {
+  const sinLat = Math.sin((lat * Math.PI) / 180);
+  const scale = 256 * Math.pow(2, zoom);
+  const x = ((lng + 180) / 360) * scale;
+  const y =
+    (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * scale;
+  return { x, y };
+}
+
+function pickClusterColor(members: Charger[]) {
+  const anyReserved = members.some((c: any) => Boolean((c as any).reserved_by_me));
+  if (anyReserved) return "#A855F7"; // purple
+
+  const anyAvailable = members.some((c) => c.status === "available");
+  if (anyAvailable) return "#3B82F6"; // blue
+
+  const anyInUse = members.some((c) => c.status === "in_use");
+  if (anyInUse) return "#F97316"; // orange
+
+  return "#EF4444"; // red
+}
+
+function isSameCoordinateCluster(members: Charger[]) {
+  if (members.length <= 1) return false;
+  const a0 = members[0];
+  return members.every(
+    (c) =>
+      Math.abs(c.lat - a0.lat) <= COORD_EPS &&
+      Math.abs(c.lng - a0.lng) <= COORD_EPS
+  );
+}
+
+function ClusterPin({
+  color,
+  count,
+  onClick,
+}: {
+  color: string;
+  count: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      type="button"
+      className="relative cursor-pointer select-none"
+      style={{ width: 34, height: 34 }}
+      aria-label={count > 1 ? `${count} chargers here` : "Charger"}
+      title={count > 1 ? `${count} chargers here` : "Charger"}
+    >
+      <svg
+        width="34"
+        height="34"
+        viewBox="0 0 64 64"
+        className="drop-shadow-md"
+        aria-hidden="true"
+      >
+        <path
+          d="M32 2C20.4 2 11 11.4 11 23c0 14.7 18.6 34.8 19.4 35.7.9 1 2.3 1 3.2 0C34.4 57.8 53 37.7 53 23 53 11.4 43.6 2 32 2z"
+          fill={color}
+        />
+        <circle cx="32" cy="23" r="10" fill="white" opacity="0.9" />
+      </svg>
+
+      {count > 1 && (
+        <div
+          className="absolute -top-1 -right-1 flex items-center justify-center rounded-full bg-white text-slate-900 font-semibold shadow"
+          style={{ width: 20, height: 20, fontSize: 12 }}
+        >
+          {count}
+        </div>
+      )}
+    </button>
+  );
+}
+
+/** --- MapView --- */
 export function MapView() {
   const { chargers, loading, error, reload } = useFetchChargers();
 
@@ -31,6 +121,12 @@ export function MapView() {
   const [isReserving, setIsReserving] = useState(false);
   const [hasActiveReservation, setHasActiveReservation] = useState(false);
   const [reservationError, setReservationError] = useState<string | null>(null);
+
+  // Cluster navigation context (for same-coordinate clusters)
+  const [clusterContext, setClusterContext] = useState<{
+    ids: string[];
+    index: number;
+  } | null>(null);
 
   // Initialize reservation state from backend-provided flags
   useEffect(() => {
@@ -119,15 +215,62 @@ export function MapView() {
     });
   }, [filteredChargers]);
 
+  // Clustered overlay list
+  const clustered = useMemo((): Cluster[] => {
+    const clusters: Array<{ members: Charger[]; px: number; py: number }> = [];
+
+    for (const c of filteredChargers) {
+      const { x, y } = latLngToPixel(c.lat, c.lng, zoom);
+
+      let bestIdx = -1;
+      let bestDist2 = Infinity;
+
+      for (let i = 0; i < clusters.length; i++) {
+        const dx = x - clusters[i].px;
+        const dy = y - clusters[i].py;
+        const d2 = dx * dx + dy * dy;
+
+        if (d2 < CLUSTER_PX * CLUSTER_PX && d2 < bestDist2) {
+          bestDist2 = d2;
+          bestIdx = i;
+        }
+      }
+
+      if (bestIdx === -1) {
+        clusters.push({ members: [c], px: x, py: y });
+      } else {
+        clusters[bestIdx].members.push(c);
+        const n = clusters[bestIdx].members.length;
+        clusters[bestIdx].px = clusters[bestIdx].px + (x - clusters[bestIdx].px) / n;
+        clusters[bestIdx].py = clusters[bestIdx].py + (y - clusters[bestIdx].py) / n;
+      }
+    }
+
+    return clusters.map((cl, idx) => {
+      const members = cl.members;
+      const lat = members.reduce((s, m) => s + m.lat, 0) / members.length;
+      const lng = members.reduce((s, m) => s + m.lng, 0) / members.length;
+      const color = pickClusterColor(members);
+
+      return {
+        id: `cluster-${zoom}-${idx}-${members.length}`,
+        lat,
+        lng,
+        members,
+        count: members.length,
+        color,
+      };
+    });
+  }, [filteredChargers, zoom]);
+
   const handleReserve = async (chargerId: string, minutes?: number) => {
     setReservationError(null);
     setIsReserving(true);
 
     try {
       await reserveCharger(chargerId, minutes);
-      // refresh authoritative state from backend and update selected popup
       const newList = await reload();
-      const updated = newList.find((c) => c.id === chargerId) ?? null;
+      const updated = newList.find((c) => String(c.id) === String(chargerId)) ?? null;
       setSelectedCharger(updated);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Reservation failed. Please try again.";
@@ -141,9 +284,8 @@ export function MapView() {
     setReservationError(null);
     try {
       await cancelReservation(chargerId);
-      // refresh authoritative state from backend and update selected popup
       const newList = await reload();
-      const updated = newList.find((c) => c.id === chargerId) ?? null;
+      const updated = newList.find((c) => String(c.id) === String(chargerId)) ?? null;
       setSelectedCharger(updated);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Cancel failed";
@@ -154,10 +296,9 @@ export function MapView() {
   // Keep the open details panel in sync with the latest charger data
   useEffect(() => {
     if (!selectedCharger) return;
-    const updated = chargers.find((c) => c.id === selectedCharger.id);
-    if (!updated) return; // charger no longer in list
+    const updated = chargers.find((c) => String(c.id) === String(selectedCharger.id));
+    if (!updated) return;
 
-    // shallow check for changes we care about (status / reserved_by_me)
     if (
       updated.status !== selectedCharger.status ||
       Boolean((updated as any).reserved_by_me) !== Boolean((selectedCharger as any).reserved_by_me)
@@ -166,23 +307,32 @@ export function MapView() {
     }
   }, [chargers, selectedCharger]);
 
-  const getMarkerColor = (status: Charger["status"], reserved_by_me?: boolean) => {
-    // If reserved by current user, show purple/violet
-    if (reserved_by_me) {
-      return "#A855F7"; // purple-500
+  // Cluster context refresh on reload / chargers update
+  useEffect(() => {
+    if (!clusterContext) return;
+
+    const fresh = clusterContext.ids
+      .map((id) => chargers.find((c) => String(c.id) === id))
+      .filter(Boolean) as Charger[];
+
+    if (fresh.length === 0) {
+      setClusterContext(null);
+      setSelectedCharger(null);
+      return;
     }
-    
-    switch (status) {
-      case "available":
-        return "#3B82F6";
-      case "in_use":
-        return "#F97316";
-      case "outage":
-        return "#EF4444";
-      default:
-        return "#9CA3AF";
+
+    const safeIndex = Math.min(clusterContext.index, fresh.length - 1);
+    const nextSelected = fresh[safeIndex];
+
+    if (!selectedCharger || String(selectedCharger.id) !== String(nextSelected.id)) {
+      setSelectedCharger(nextSelected);
     }
-  };
+
+    const nextIds = fresh.map((c) => String(c.id));
+    if (nextIds.join("|") !== clusterContext.ids.join("|")) {
+      setClusterContext({ ids: nextIds, index: safeIndex });
+    }
+  }, [chargers, clusterContext, selectedCharger]);
 
   const recenter = () => {
     const c = userLocation ?? fallback;
@@ -193,10 +343,44 @@ export function MapView() {
 
   const handleChargerSelectFromList = (charger: Charger) => {
     setViewMode("map");
+    setClusterContext(null);
     setSelectedCharger(charger);
     setMapCenter([charger.lat, charger.lng]);
     setZoom(15);
     setFollowUser(false);
+  };
+
+  const openCluster = (members: Charger[], startIndex = 0) => {
+    const ids = members.map((m) => String(m.id));
+    setClusterContext({ ids, index: startIndex });
+    setSelectedCharger(members[startIndex] ?? null);
+  };
+
+  const closeDetails = () => {
+    setSelectedCharger(null);
+    setClusterContext(null);
+  };
+
+  const goPrevInCluster = () => {
+    setClusterContext((ctx) => {
+      if (!ctx) return ctx;
+      const nextIndex = (ctx.index - 1 + ctx.ids.length) % ctx.ids.length;
+      const nextId = ctx.ids[nextIndex];
+      const nextCharger = chargers.find((c) => String(c.id) === nextId) ?? null;
+      setSelectedCharger(nextCharger);
+      return { ...ctx, index: nextIndex };
+    });
+  };
+
+  const goNextInCluster = () => {
+    setClusterContext((ctx) => {
+      if (!ctx) return ctx;
+      const nextIndex = (ctx.index + 1) % ctx.ids.length;
+      const nextId = ctx.ids[nextIndex];
+      const nextCharger = chargers.find((c) => String(c.id) === nextId) ?? null;
+      setSelectedCharger(nextCharger);
+      return { ...ctx, index: nextIndex };
+    });
   };
 
   if (loading) {
@@ -296,13 +480,34 @@ export function MapView() {
               </Overlay>
             )}
 
-            {filteredChargers.map((charger) => (
-              <Marker
-                key={charger.id}
-                anchor={[charger.lat, charger.lng]}
-                color={getMarkerColor(charger.status, charger.reserved_by_me)}
-                onClick={() => setSelectedCharger(charger)}
-              />
+            {clustered.map((cl) => (
+              <Overlay key={cl.id} anchor={[cl.lat, cl.lng]} offset={[17, 34]}>
+                <ClusterPin
+                  color={cl.color}
+                  count={cl.count}
+                  onClick={() => {
+                    if (cl.count === 1) {
+                      setClusterContext(null);
+                      setSelectedCharger(cl.members[0]);
+                      return;
+                    }
+
+                    if (isSameCoordinateCluster(cl.members)) {
+                      openCluster(cl.members, 0);
+                      return;
+                    }
+
+                    setMapCenter([cl.lat, cl.lng]);
+                    setZoom((z) => Math.min(z + 2, 19));
+                    setFollowUser(false);
+
+                    // If we're already very zoomed, fallback to opening cluster carousel
+                    if (zoom >= 18) {
+                      openCluster(cl.members, 0);
+                    }
+                  }}
+                />
+              </Overlay>
             ))}
           </Map>
 
@@ -310,14 +515,20 @@ export function MapView() {
           {selectedCharger && (
             <ChargerDetails
               charger={selectedCharger}
-              onClose={() => setSelectedCharger(null)}
+              onClose={closeDetails}
               onReserve={handleReserve}
-              isReserved={(selectedCharger as any).reserved_by_me ?? reservedChargers.has(selectedCharger.id)}
+              isReserved={
+                (selectedCharger as any).reserved_by_me ?? reservedChargers.has(selectedCharger.id)
+              }
               isReserving={isReserving}
               hasActiveReservation={hasActiveReservation}
               error={reservationError}
               onErrorClose={() => setReservationError(null)}
               onCancel={handleCancel}
+              clusterIndex={clusterContext?.index ?? null}
+              clusterCount={clusterContext?.ids.length ?? null}
+              onPrevCharger={clusterContext ? goPrevInCluster : undefined}
+              onNextCharger={clusterContext ? goNextInCluster : undefined}
             />
           )}
 

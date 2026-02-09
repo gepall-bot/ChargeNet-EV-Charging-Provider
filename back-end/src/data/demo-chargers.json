@@ -6403,6 +6403,16 @@
     "providerName": "Tesla Supercharger"
   },
   {
+    "name": "Larisa Charger 498.2",
+    "address": "Larisa Metro Station 498, Greece",
+    "lat": 39.660061,
+    "lng": 22.401542,
+    "connectorType": "CCS",
+    "maxKW": 150.0,
+    "status": "OUTAGE",
+    "providerName": "Tesla Supercharger"
+  },
+  {
     "name": "Marseille Charger 499",
     "address": "Marseille Supermarket Lot 499, France",
     "lat": 43.312333,

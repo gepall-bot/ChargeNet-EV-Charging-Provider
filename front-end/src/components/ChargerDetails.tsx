@@ -10,30 +10,36 @@ import {
   CheckCircle,
   DollarSign,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { fetchCharger } from "../utils/api"; // Η δική σου προσθήκη
+import { fetchCharger } from "../utils/api";
 import type { Charger } from "../types/charger";
-import { CartoonCar } from "./ui/CartoonCar"; // Του συναδέλφου
+import { CartoonCar } from "./ui/CartoonCar";
 
-import { useUserVehicles } from "../hooks/useUserVehicles"; // Του συναδέλφου
+import { useUserVehicles } from "../hooks/useUserVehicles";
 import type { Vehicle } from "../utils/vehicleMapper";
 
 interface ChargerDetailsProps {
   charger: Charger;
   onClose: () => void;
-  // reservation actions
+
   onReserve: (chargerId: string, minutes?: number) => void;
   onCancel: (chargerId: string) => void;
 
-  // reservation state from parent
   isReserved: boolean;
   isReserving: boolean;
   hasActiveReservation: boolean;
 
-  // error state from parent
   error: string | null;
   onErrorClose: () => void;
+
+  // optional cluster navigation
+  clusterIndex?: number | null;
+  clusterCount?: number | null;
+  onPrevCharger?: () => void;
+  onNextCharger?: () => void;
 }
 
 export function ChargerDetails({
@@ -46,12 +52,15 @@ export function ChargerDetails({
   hasActiveReservation,
   error,
   onErrorClose,
+  clusterIndex = null,
+  clusterCount = null,
+  onPrevCharger,
+  onNextCharger,
 }: ChargerDetailsProps) {
   const router = useRouter();
 
   const [timeRemaining, setTimeRemaining] = useState(0);
 
-  // Logic για τα οχήματα (από main)
   const {
     vehicles,
     loading: vehiclesLoading,
@@ -68,7 +77,6 @@ export function ChargerDetails({
     }
   }, [vehicles, selectedVehicle]);
 
-  // Timer logic (από main)
   useEffect(() => {
     if (charger.status === "in_use" && timeRemaining > 0) {
       const interval = setInterval(() => {
@@ -136,7 +144,6 @@ export function ChargerDetails({
     }
   };
 
-  // Εδώ συνδυάζουμε τα props για το Mobile και το Desktop view
   const contentProps = {
     charger,
     timeRemaining,
@@ -144,7 +151,7 @@ export function ChargerDetails({
     getStatusColor,
     getStatusIcon,
     getStatusText,
-    connectorLabel, // Περνάμε το label function που έφτιαξε ο συνάδελφος
+    connectorLabel,
     onReserve,
     onCancel,
     isReserved,
@@ -152,7 +159,6 @@ export function ChargerDetails({
     hasActiveReservation,
     error,
     onErrorClose,
-    // Props οχημάτων (από main)
     vehicles,
     vehiclesLoading,
     vehiclesError,
@@ -168,7 +174,14 @@ export function ChargerDetails({
       {/* Mobile */}
       <div className="md:hidden absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-2xl z-[1000] max-h-[75vh] overflow-y-auto">
         <div className="p-4 sm:p-6">
-          <Header title={charger.name ?? "Charger"} onClose={onClose} />
+          <Header
+            title={charger.name ?? "Charger"}
+            onClose={onClose}
+            clusterIndex={clusterIndex}
+            clusterCount={clusterCount}
+            onPrev={onPrevCharger}
+            onNext={onNextCharger}
+          />
           <ChargerContent {...contentProps} />
         </div>
       </div>
@@ -176,7 +189,14 @@ export function ChargerDetails({
       {/* Desktop */}
       <div className="hidden md:block absolute top-4 left-4 bg-white rounded-lg shadow-2xl z-[1000] w-96 max-h-[calc(100vh-2rem)] overflow-y-auto">
         <div className="p-6">
-          <Header title={charger.name ?? "Charger"} onClose={onClose} />
+          <Header
+            title={charger.name ?? "Charger"}
+            onClose={onClose}
+            clusterIndex={clusterIndex}
+            clusterCount={clusterCount}
+            onPrev={onPrevCharger}
+            onNext={onNextCharger}
+          />
           <ChargerContent {...contentProps} />
         </div>
       </div>
@@ -184,17 +204,69 @@ export function ChargerDetails({
   );
 }
 
-function Header({ title, onClose }: { title: string; onClose: () => void }) {
+function Header({
+  title,
+  onClose,
+  clusterIndex,
+  clusterCount,
+  onPrev,
+  onNext,
+}: {
+  title: string;
+  onClose: () => void;
+  clusterIndex?: number | null;
+  clusterCount?: number | null;
+  onPrev?: () => void;
+  onNext?: () => void;
+}) {
+  const inCluster =
+    typeof clusterIndex === "number" && typeof clusterCount === "number" && clusterCount > 1;
+
   return (
-    <div className="flex justify-between items-start mb-4">
-      <h2 className="text-xl">{title}</h2>
-      <button
-        type="button"
-        onClick={onClose}
-        className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-      >
-        <X className="w-5 h-5" />
-      </button>
+    <div className="flex justify-between items-start mb-4 gap-3">
+      <div className="min-w-0">
+        <h2 className="text-xl truncate">{title}</h2>
+
+        {inCluster && (
+          <div className="mt-1 flex items-center gap-2 text-sm text-gray-500">
+            <span>
+              Charger {clusterIndex! + 1} of {clusterCount}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1">
+        {inCluster && (
+          <>
+            <button
+              type="button"
+              onClick={onPrev}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              aria-label="Previous charger"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              onClick={onNext}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              aria-label="Next charger"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </>
+        )}
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+          aria-label="Close"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -251,22 +323,16 @@ function ChargerContent({
   setSelectedVehicle,
   goToProfile,
 }: ChargerContentProps) {
-  // State για το μενού οχημάτων
   const [showVehicleMenu, setShowVehicleMenu] = useState(false);
 
-  const price = typeof charger.kwhprice === "number" ? charger.kwhprice : 0;
-
-  // reservation UI state
   const [reservationEndTime, setReservationEndTime] = useState<string | null>(null);
   const [showDurationPicker, setShowDurationPicker] = useState(false);
   const [selectedMinutes, setSelectedMinutes] = useState<number>(30);
 
-// Close the dropdown if selection changes or vehicles refresh
   useEffect(() => {
     setShowVehicleMenu(false);
   }, [selectedVehicle?.id, vehicles.length]);
 
-  // Fetch reservation end time (non-fatal if it fails)
   useEffect(() => {
     let mounted = true;
 
@@ -279,19 +345,18 @@ function ChargerContent({
           setReservationEndTime(null);
         }
       } catch {
-        // ignore - non-fatal
+        // ignore
       }
     }
 
     loadDetails();
-
     return () => {
       mounted = false;
     };
   }, [charger.id]);
 
   const chargerPowerKW = charger.maxKW ?? 0;
-  const pricePerKwh = typeof charger.kwhprice === "number" ? charger.kwhprice : 0;
+  const pricePerKwh = typeof (charger as any).kwhprice === "number" ? (charger as any).kwhprice : 0;
 
   const estimates = useMemo(() => {
     if (!selectedVehicle || chargerPowerKW <= 0) return null;
@@ -314,13 +379,11 @@ function ChargerContent({
 
   return (
     <div className="space-y-4">
-      {/* Status */}
       <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-full ${getStatusColor()}`}>
         {getStatusIcon()}
         <span>{getStatusText()}</span>
       </div>
 
-      {/* Vehicle / Estimates */}
       {charger.status === "available" && (
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 sm:p-4 space-y-3">
           {vehiclesLoading && <p className="text-sm text-gray-600">Loading your cars…</p>}
@@ -361,7 +424,6 @@ function ChargerContent({
                 <p className="text-sm text-gray-700">Selecting your car…</p>
               ) : (
                 <>
-                  {/* Title row is dropdown trigger */}
                   <div className="relative">
                     <button
                       type="button"
@@ -467,19 +529,16 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Address */}
       <InfoRow
         icon={<MapPin className="w-5 h-5 text-gray-400" />}
-        text={charger.address || "No address provided"}
+        text={(charger as any).address || "No address provided"}
       />
 
-      {/* Charger Details */}
       <InfoRow
         icon={<Zap className="w-5 h-5 text-gray-400" />}
         text={`${chargerPowerKW} kW • ${connectorLabel(charger.connectorType)}`}
       />
 
-      {/* Timer */}
       {charger.status === "in_use" && (
         <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
           <p className="text-orange-900 mb-1">Estimated Time Remaining</p>
@@ -487,7 +546,6 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Active reservation warning */}
       {hasActiveReservation && !isReserved && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <div className="flex items-center gap-2">
@@ -497,7 +555,6 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Error message */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <div className="flex items-start justify-between">
@@ -517,36 +574,6 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Active reservation warning */}
-      {hasActiveReservation && !isReserved && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-yellow-600" />
-            <span className="text-yellow-900">You already have an active reservation</span>
-          </div>
-        </div>
-      )}
-
-      {/* Error message */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-start justify-between">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <span className="text-red-900 text-sm">{error}</span>
-            </div>
-            <button
-              onClick={onErrorClose}
-              className="text-red-600 hover:text-red-800 ml-2"
-              aria-label="Close error"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Reserve + Navigate */}
       {(charger.status === "available" || isReserved) && (
         <div className="space-y-2">
           <button
@@ -589,7 +616,6 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Cancel button for user's reservation */}
       {isReserved && (
         <div className="pt-2">
           <button
@@ -605,10 +631,8 @@ function ChargerContent({
         </div>
       )}
 
-      {/* Duration picker modal */}
       {showDurationPicker && (
         <>
-          {/* Mobile: centered modal */}
           <div className="md:hidden fixed inset-0 z-[1200] flex items-center justify-center">
             <div
               className="absolute inset-0 bg-black/40 backdrop-blur-sm"
@@ -650,7 +674,6 @@ function ChargerContent({
             </div>
           </div>
 
-          {/* Desktop: anchored */}
           <div className="hidden md:block absolute left-4 top-28 z-[1300]">
             <div className="bg-white rounded-xl p-4 w-80 shadow-2xl ring-1 ring-gray-100 border border-gray-200">
               <h3 className="text-lg font-medium mb-2">Select reservation duration</h3>
@@ -694,7 +717,6 @@ function ChargerContent({
         <div className="text-sm text-gray-600">Reservation ends: {reservationEndTime}</div>
       )}
 
-      {/* Pricing */}
       <div className="pt-4 border-t">
         <p className="text-sm text-gray-500">Pricing</p>
         <p className="text-gray-900">€{pricePerKwh.toFixed(2)}/kWh</p>
