@@ -14,33 +14,47 @@ Write-Host "========================================" -ForegroundColor Cyan
 
 # 1. Check Docker
 Write-Host "`n[STEP 1] Checking Docker..." -ForegroundColor Yellow
-try {
-    docker info | Out-Null
-    Write-Host "[OK] Docker is running." -ForegroundColor Green
-} catch {
-    Write-Error "Docker is not running. Please start Docker Desktop and try again."
+$dockerOutput = docker info 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] Docker is not running. Please start Docker Desktop and try again." -ForegroundColor Red
     exit 1
 }
+Write-Host "[OK] Docker is running." -ForegroundColor Green
 
 # 2. Start Containers
 Write-Host "`n[STEP 2] Starting Postgres and Redis..." -ForegroundColor Yellow
-docker compose up -d
+$ErrorActionPreference = "Continue"
+docker compose up -d 2>&1 | Where-Object { $_ -notmatch "level=warning" }
+$composeExitCode = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($composeExitCode -ne 0) {
+    Write-Host "[ERROR] Failed to start Docker containers. Make sure Docker Desktop is running." -ForegroundColor Red
+    exit 1
+}
 Write-Host "[OK] Docker containers started." -ForegroundColor Green
 
 # Wait for Postgres
 Write-Host "       Waiting for Database to be ready..." -ForegroundColor Gray
 Start-Sleep -Seconds 5
 $attempts = 0
+$dbReady = $false
+$ErrorActionPreference = "Continue"
 do {
     $attempts++
-    try {
-        docker compose exec -T postgres pg_isready -U user -d ev_app | Out-Null
+    docker compose exec -T postgres pg_isready -U user -d ev_app 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        $dbReady = $true
         break
-    } catch {
-        Write-Host "       ...waiting ($attempts)"
-        Start-Sleep -Seconds 2
     }
+    Write-Host "       ...waiting ($attempts)"
+    Start-Sleep -Seconds 2
 } while ($attempts -lt 15)
+$ErrorActionPreference = "Stop"
+
+if (-not $dbReady) {
+    Write-Host "[ERROR] Database did not become ready in time." -ForegroundColor Red
+    exit 1
+}
 Write-Host "[OK] Database is ready." -ForegroundColor Green
 
 # 3. Backend Setup
@@ -69,10 +83,20 @@ STRIPE_SECRET_KEY=sk_test_51SoNW7Qo2CKKZoiNYzjJEbJmxfiKb0JyoPwvHYst2ofoisB6Lnieo
 
 Write-Host "       Syncing database schema..."
 npx prisma db push --accept-data-loss
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] Failed to sync database schema." -ForegroundColor Red
+    Pop-Location
+    exit 1
+}
 Write-Host "[OK] Schema synced." -ForegroundColor Green
 
 Write-Host "       Seeding database..."
 npx prisma db seed
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] Failed to seed database." -ForegroundColor Red
+    Pop-Location
+    exit 1
+}
 Write-Host "[OK] Database seeded (Admin user created)." -ForegroundColor Green
 
 Pop-Location
