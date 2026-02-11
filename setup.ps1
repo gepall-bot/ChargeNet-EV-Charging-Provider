@@ -122,19 +122,23 @@ STRIPE_SECRET_KEY=sk_test_51SoNW7Qo2CKKZoiNYzjJEbJmxfiKb0JyoPwvHYst2ofoisB6Lnieo
         }
 
         Write-Host "       Generating Prisma client..."
-        cmd /c "npx prisma generate" 2>&1 | Out-Null
+        $null = cmd /c "npx prisma generate 2>&1"
+        if ($LASTEXITCODE -ne 0) { throw "Prisma generate failed" }
         Write-Host "Prisma client generated." -ForegroundColor Green
 
         Write-Host "       Syncing database schema..."
-        cmd /c "npx prisma db push --accept-data-loss" 2>&1 | Out-Null
+        $null = cmd /c "npx prisma db push --accept-data-loss 2>&1"
+        if ($LASTEXITCODE -ne 0) { throw "Prisma db push failed" }
         Write-Host "Database schema synced." -ForegroundColor Green
 
         Write-Host "       Seeding database (admin user + pricing profile)..."
-        cmd /c "npx prisma db seed" 2>&1 | Out-Null
+        $null = cmd /c "npx prisma db seed 2>&1"
+        if ($LASTEXITCODE -ne 0) { throw "Prisma seed failed" }
         Write-Host "Database seeded." -ForegroundColor Green
 
         Write-Host "       Seeding car catalog..."
-        cmd /c "npx tsx src/scripts/seedCars.ts" 2>&1 | Out-Null
+        $null = cmd /c "npx tsx src/scripts/seedCars.ts 2>&1"
+        if ($LASTEXITCODE -ne 0) { throw "Car catalog seeding failed" }
         Write-Host "Car catalog seeded." -ForegroundColor Green
 
     } catch {
@@ -273,10 +277,16 @@ Write-Host ""
 Write-Host "  Terminal 2 (Frontend):" -ForegroundColor Cyan
 Write-Host "    cd front-end; npm run dev"
 Write-Host ""
-Write-Host "Access from this PC:  http://localhost:3000"
+Write-Host "  Access from this PC:  http://localhost:3000"
 if ($LAN_IP -ne "localhost") {
-    Write-Host "Access from phone:    http://${LAN_IP}:3000"
+    Write-Host "  Access from phone:    http://${LAN_IP}:3000"
 }
 Write-Host ""
-Write-Host "Backend API:          http://localhost:9876/api/v1"
+Write-Host "  Backend API:          http://localhost:9876/api/v1"
+Write-Host ""
+Write-Host ""
+Write-Host "  Terminal 3 : Initialize Data (IMPORTANT)" -ForegroundColor Cyan
+Write-Host "   (Ensure Backend is running first)"
+Write-Host "   se2502 login --username admin@ev.local --passw admin123"
+Write-Host "   se2502 resetpoints"
 Write-Host ""
