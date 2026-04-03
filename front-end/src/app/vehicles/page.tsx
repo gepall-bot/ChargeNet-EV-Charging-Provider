@@ -1,7 +1,6 @@
 "use client";
-
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -16,6 +15,13 @@ import { MenuPanel } from "../../components/MenuPanel";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import { 
+  fetchCarBrands, 
+  fetchCarModels, 
+  fetchCarOwnerships, 
+  searchCars, 
+  addCarOwnership 
+} from "../../utils/api";
 import {
   Dialog,
   DialogContent,
@@ -187,6 +193,7 @@ export default function VehiclesScreen() {
       setRemovingId(null);
     }
   };
+  };
 
   return (
     <div className="flex flex-col sm:flex-row h-screen w-full">
@@ -259,7 +266,7 @@ export default function VehiclesScreen() {
             <div className="space-y-4">
               {vehicles.map((vehicle) => (
                 <VehicleCard
-                  key={vehicle.id}
+                  key={vehicle.ownershipId}
                   vehicle={vehicle}
                   onRemove={handleRemoveVehicle}
                   removing={removingId === vehicle.id}
@@ -363,6 +370,7 @@ export default function VehiclesScreen() {
               </p>
             )}
 
+            {/* Color picker */}
             <div>
               <Label htmlFor="color-select">Vehicle color</Label>
               <Select value={selectedColor} onValueChange={(value: CarColorValue) => setSelectedColor(value)}>
