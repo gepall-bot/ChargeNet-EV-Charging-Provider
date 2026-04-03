@@ -2,10 +2,11 @@
   "name": "back-end",
   "version": "1.0.0",
   "description": "Ενδεικτικά περιεχόμενα:",
-  "main": "index.js",
+  "main": "src/index.ts",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "build": "tsc --noEmit",
     "lint": "echo \"(add ESLint later)\"",
     "test": "echo \"(add Jest later)\" && exit 0",
     "prisma:migrate": "prisma migrate dev",
@@ -26,6 +27,8 @@
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
+    "node-fetch": "^3.3.2",
+    "redis": "^5.10.0",
     "stripe": "^17.7.0",
     "xml2js": "^0.6.2",
     "zod": "^4.1.12"

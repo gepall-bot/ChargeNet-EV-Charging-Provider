@@ -1,12 +1,27 @@
 "use client";
-import { SideMenu } from '../../components/SideMenu';
-import { MenuPanel } from '../../components/MenuPanel';
-import { useState, useEffect, useRef } from 'react';
-import { fetchCarBrands, fetchCarModels, fetchCarOwnerships, searchCars, addCarOwnership } from '../../utils/api';
-import { Button } from '../../components/ui/button';
-import { Input } from '../../components/ui/input';
-import { Label } from '../../components/ui/label';
-import { Plus, Trash2, Menu, Loader2 } from 'lucide-react';
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  Menu,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
+import { SideMenu } from "../../components/SideMenu";
+import { MenuPanel } from "../../components/MenuPanel";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { 
+  fetchCarBrands, 
+  fetchCarModels, 
+  fetchCarOwnerships, 
+  searchCars, 
+  addCarOwnership 
+} from "../../utils/api";
 import {
   Dialog,
   DialogContent,
@@ -14,195 +29,174 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '../../components/ui/dialog';
+} from "../../components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
+import { ScrollArea } from "../../components/ui/scroll-area";
+import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
+import { cn } from "../../components/ui/utils";
+import { useUserVehicles } from "../../hooks/useUserVehicles";
+import {
+  createCarOwnership,
+  deleteCarOwnership,
+  searchCars,
+} from "../../utils/api";
+import type { Vehicle } from "../../utils/vehicleMapper";
+import type { CarApi } from "../../types/ownership";
 
-const CAR_COLORS = [
-  { value: 'RED', label: 'Red', hex: '#EF4444' },
-  { value: 'BLUE', label: 'Blue', hex: '#3B82F6' },
-  { value: 'YELLOW', label: 'Yellow', hex: '#EAB308' },
-  { value: 'WHITE', label: 'White', hex: '#F9FAFB' },
-  { value: 'BLACK', label: 'Black', hex: '#1F2937' },
-  { value: 'SILVER', label: 'Silver', hex: '#9CA3AF' },
-  { value: 'GREY', label: 'Grey', hex: '#6B7280' },
-  { value: 'GREEN', label: 'Green', hex: '#22C55E' },
-  { value: 'ORANGE', label: 'Orange', hex: '#F97316' },
-  { value: 'PURPLE', label: 'Purple', hex: '#A855F7' },
+const CAR_COLOR_OPTIONS = [
+  { value: "RED", label: "Red", swatch: "#ef4444" },
+  { value: "BLUE", label: "Blue", swatch: "#3b82f6" },
+  { value: "YELLOW", label: "Yellow", swatch: "#eab308" },
+  { value: "WHITE", label: "White", swatch: "#f9fafb" },
+  { value: "BLACK", label: "Black", swatch: "#111827" },
+  { value: "SILVER", label: "Silver", swatch: "#9ca3af" },
+  { value: "GREY", label: "Grey", swatch: "#6b7280" },
+  { value: "GREEN", label: "Green", swatch: "#22c55e" },
+  { value: "ORANGE", label: "Orange", swatch: "#f97316" },
+  { value: "PURPLE", label: "Purple", swatch: "#a855f7" },
 ] as const;
 
-interface Vehicle {
-  ownershipId: number;
-  carId: number;
-  brand: string;
-  model: string;
-  variant: string | null;
-  color: string;
-  usableBatteryKWh: number;
-  dcMaxKW: number;
-  acMaxKW: number;
-}
+type CarColorValue = (typeof CAR_COLOR_OPTIONS)[number]["value"];
 
-function mapOwnershipToVehicle(o: any): Vehicle {
-  return {
-    ownershipId: o.id,
-    carId: o.carId,
-    brand: o.car.brand,
-    model: o.car.model,
-    variant: o.car.variant ?? null,
-    color: o.color,
-    usableBatteryKWh: o.car.usableBatteryKWh,
-    dcMaxKW: o.car.dcMaxKW,
-    acMaxKW: o.car.acMaxKW,
-  };
-}
+const MIN_SEARCH_QUERY = 2;
+const SEARCH_DEBOUNCE_MS = 350;
 
-function getColorHex(colorValue: string): string {
-  return CAR_COLORS.find((c) => c.value === colorValue)?.hex ?? '#9CA3AF';
-}
-
-function getColorLabel(colorValue: string): string {
-  return CAR_COLORS.find((c) => c.value === colorValue)?.label ?? colorValue;
-}
+const formatColorLabel = (value: string) =>
+  value.charAt(0) + value.slice(1).toLowerCase();
 
 export default function VehiclesScreen() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<CarApi[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [selectedCar, setSelectedCar] = useState<CarApi | null>(null);
+  const [selectedColor, setSelectedColor] = useState<CarColorValue>("SILVER");
+  const [saving, setSaving] = useState(false);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
-  // Brand search dropdown state
-  const [allBrands, setAllBrands] = useState<string[]>([]);
-  const [brandQuery, setBrandQuery] = useState('');
-  const [selectedBrand, setSelectedBrand] = useState('');
-  const [isBrandDropdownOpen, setIsBrandDropdownOpen] = useState(false);
-  const brandRef = useRef<HTMLDivElement>(null);
+  const { vehicles, loading, error, hasNoCars, notLoggedIn, refresh } = useUserVehicles();
 
-  // Model search dropdown state
-  const [allModels, setAllModels] = useState<string[]>([]);
-  const [modelQuery, setModelQuery] = useState('');
-  const [selectedModel, setSelectedModel] = useState('');
-  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
-  const modelRef = useRef<HTMLDivElement>(null);
-
-  // Color state
-  const [selectedColor, setSelectedColor] = useState('WHITE');
-
-  // Load existing vehicles from backend
   useEffect(() => {
-    fetchCarOwnerships()
-      .then((data: any[]) => {
-        setVehicles(data.map(mapOwnershipToVehicle));
-      })
-      .catch((err) => {
-        console.error('Failed to load vehicles:', err);
-        setError('Failed to load your vehicles. Please sign in and try again.');
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  // Fetch brands
-  useEffect(() => {
-    fetchCarBrands()
-      .then(setAllBrands)
-      .catch((err) => console.error('Failed to fetch brands:', err));
-  }, []);
-
-  // Close brand dropdown when clicking outside
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (brandRef.current && !brandRef.current.contains(e.target as Node)) {
-        setIsBrandDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const filteredBrands = allBrands.filter((b) =>
-    b.toLowerCase().startsWith(brandQuery.toLowerCase())
-  );
-
-  // Fetch models when brand is selected
-  useEffect(() => {
-    if (!selectedBrand) {
-      setAllModels([]);
-      setModelQuery('');
-      setSelectedModel('');
+    if (!isAddDialogOpen) return;
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < MIN_SEARCH_QUERY) {
+      setSearchResults([]);
+      setSearchError(null);
+      setSearching(false);
       return;
     }
-    fetchCarModels(selectedBrand)
-      .then(setAllModels)
-      .catch((err) => console.error('Failed to fetch models:', err));
-  }, [selectedBrand]);
 
-  // Close model dropdown when clicking outside
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (modelRef.current && !modelRef.current.contains(e.target as Node)) {
-        setIsModelDropdownOpen(false);
+    setSearching(true);
+    setSearchError(null);
+
+    const timer = setTimeout(async () => {
+      try {
+        const results = await searchCars(trimmed);
+        setSearchResults(results);
+      } catch (err: any) {
+        setSearchError(err?.message ?? "Unable to search vehicles right now.");
+      } finally {
+        setSearching(false);
       }
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, isAddDialogOpen]);
+
+  useEffect(() => {
+    if (!statusMessage) return;
+    const timer = setTimeout(() => setStatusMessage(null), 4000);
+    return () => clearTimeout(timer);
+  }, [statusMessage]);
+
+  useEffect(() => {
+    if (!statusError) return;
+    const timer = setTimeout(() => setStatusError(null), 5000);
+    return () => clearTimeout(timer);
+  }, [statusError]);
+
+  const resetDialogState = () => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setSelectedCar(null);
+    setSelectedColor("SILVER");
+    setDialogError(null);
+    setSearchError(null);
+    setSearching(false);
+    setSaving(false);
+  };
+
+  const handleDialogOpenChange = (open: boolean) => {
+    setIsAddDialogOpen(open);
+    if (!open) {
+      resetDialogState();
     }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  };
 
-  const filteredModels = allModels.filter((m) =>
-    m.toLowerCase().startsWith(modelQuery.toLowerCase())
-  );
-
-  const resetAddForm = () => {
-    setBrandQuery('');
-    setSelectedBrand('');
-    setModelQuery('');
-    setSelectedModel('');
-    setSelectedColor('WHITE');
-    setAddError(null);
+  const handleSelectCar = (car: CarApi) => {
+    setSelectedCar(car);
+    setSearchQuery(
+      `${car.brand} ${car.model}${car.variant ? ` ${car.variant}` : ""}`.trim()
+    );
   };
 
   const handleAddVehicle = async () => {
-    if (!selectedBrand || !selectedModel) return;
+    if (!selectedCar) {
+      setDialogError("Select a vehicle from the search results before saving.");
+      return;
+    }
 
-    setAdding(true);
-    setAddError(null);
+    setDialogError(null);
+    setSaving(true);
 
     try {
-      // Search by brand to get car IDs, then match the exact model
-      const cars = await searchCars(selectedBrand);
-      const match = cars.find(
-        (c: any) =>
-          c.brand.toLowerCase() === selectedBrand.toLowerCase() &&
-          c.model.toLowerCase() === selectedModel.toLowerCase()
-      );
-
-      if (!match) {
-        setAddError('Could not find this car in our database.');
-        setAdding(false);
-        return;
-      }
-
-      const result = await addCarOwnership(match.id, selectedColor);
-      const newVehicle = mapOwnershipToVehicle(result.ownership);
-      setVehicles((prev) => [newVehicle, ...prev]);
-      resetAddForm();
-      setIsAddDialogOpen(false);
+      await createCarOwnership(selectedCar.id, selectedColor);
+      await refresh();
+      setStatusMessage(`${selectedCar.brand} ${selectedCar.model} saved to your garage.`);
+      handleDialogOpenChange(false);
     } catch (err: any) {
-      setAddError(err.message || 'Failed to add vehicle.');
+      setDialogError(err?.message ?? "Failed to save vehicle. Please try again.");
     } finally {
-      setAdding(false);
+      setSaving(false);
     }
   };
 
-  const handleRemoveVehicle = (ownershipId: number) => {
-    // Remove locally (no backend delete endpoint yet)
-    setVehicles((prev) => prev.filter((v) => v.ownershipId !== ownershipId));
+  const handleRemoveVehicle = async (ownershipId: string) => {
+    const numericId = Number(ownershipId);
+    if (Number.isNaN(numericId)) {
+      setStatusError("Unable to remove vehicle: invalid identifier.");
+      return;
+    }
+
+    setRemovingId(ownershipId);
+    setStatusError(null);
+    setStatusMessage(null);
+
+    try {
+      await deleteCarOwnership(numericId);
+      await refresh();
+      setStatusMessage("Vehicle removed successfully.");
+    } catch (err: any) {
+      setStatusError(err?.message ?? "Failed to remove vehicle.");
+    } finally {
+      setRemovingId(null);
+    }
+  };
   };
 
   return (
     <div className="flex flex-col sm:flex-row h-screen w-full">
-      {/* Mobile header */}
       <div className="sm:hidden flex items-center gap-3 p-3 bg-white border-b border-gray-200">
         <button onClick={() => setIsMenuOpen(true)} className="p-2 hover:bg-gray-100 rounded-lg">
           <Menu className="w-5 h-5 text-gray-700" />
@@ -211,36 +205,61 @@ export default function VehiclesScreen() {
       </div>
       <MenuPanel isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
 
-      {/* Main Content Area */}
       <div className="flex-1 overflow-auto bg-gray-50">
-        <div className="max-w-4xl mx-auto p-6 sm:p-8 lg:p-12">
-          <div className="mb-8 flex items-center justify-between">
+        <div className="max-w-4xl mx-auto p-6 sm:p-8 lg:p-12 space-y-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h1 className="hidden sm:block text-2xl sm:text-3xl text-gray-900 mb-2">Vehicles</h1>
-              <p className="text-sm text-gray-500">Manage your electric vehicles</p>
+              <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900">Vehicles</h1>
+              <p className="text-sm text-gray-500">Manage the EVs linked to your account.</p>
             </div>
-            <Button onClick={() => { resetAddForm(); setIsAddDialogOpen(true); }}>
+            <Button onClick={() => handleDialogOpenChange(true)}>
               <Plus className="w-4 h-4 mr-2" />
               Add Vehicle
             </Button>
           </div>
 
+          {statusError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Action failed</AlertTitle>
+              <AlertDescription>{statusError}</AlertDescription>
+            </Alert>
+          )}
+
+          {statusMessage && (
+            <Alert>
+              <CheckCircle2 className="h-4 w-4" />
+              <AlertTitle>Success</AlertTitle>
+              <AlertDescription>{statusMessage}</AlertDescription>
+            </Alert>
+          )}
+
+          {error && !statusError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Unable to load vehicles</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
           {loading ? (
-            <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-gray-400" />
-              <p className="text-gray-500">Loading your vehicles...</p>
+            <div className="bg-white rounded-lg border border-dashed border-gray-200 p-12 text-center text-gray-600">
+              <Loader2 className="w-5 h-5 animate-spin mx-auto mb-3" />
+              Loading your vehicles...
             </div>
-          ) : error ? (
-            <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-              <p className="text-red-500 mb-4">{error}</p>
-              <Button onClick={() => window.location.reload()}>Retry</Button>
+          ) : notLoggedIn ? (
+            <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+              <p className="text-gray-600 mb-4">Sign in to view and manage your vehicles.</p>
+              <Button asChild>
+                <Link href="/signin">Go to Sign In</Link>
+              </Button>
             </div>
-          ) : vehicles.length === 0 ? (
+          ) : hasNoCars ? (
             <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-              <p className="text-gray-500 mb-4">No vehicles added yet</p>
-              <Button onClick={() => { resetAddForm(); setIsAddDialogOpen(true); }}>
+              <p className="text-gray-600 mb-4">You have not added any vehicles yet.</p>
+              <Button onClick={() => handleDialogOpenChange(true)}>
                 <Plus className="w-4 h-4 mr-2" />
-                Add Your First Vehicle
+                Add your first vehicle
               </Button>
             </div>
           ) : (
@@ -249,7 +268,8 @@ export default function VehiclesScreen() {
                 <VehicleCard
                   key={vehicle.ownershipId}
                   vehicle={vehicle}
-                  onRemove={() => handleRemoveVehicle(vehicle.ownershipId)}
+                  onRemove={handleRemoveVehicle}
+                  removing={removingId === vehicle.id}
                 />
               ))}
             </div>
@@ -257,146 +277,139 @@ export default function VehiclesScreen() {
         </div>
       </div>
 
-      {/* Side Menu - hidden on mobile, visible on sm+ */}
       <div className="hidden sm:block sm:w-80 lg:w-96 flex-shrink-0">
         <SideMenu />
       </div>
 
-      {/* Add Vehicle Dialog */}
-      <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent>
+      <Dialog open={isAddDialogOpen} onOpenChange={handleDialogOpenChange}>
+        <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Add New Vehicle</DialogTitle>
+            <DialogTitle>Add a vehicle</DialogTitle>
             <DialogDescription>
-              Search for your electric vehicle and pick a color
+              Search our catalogue and link the EV you actively drive.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
-            {/* Brand */}
-            <div ref={brandRef} className="relative">
-              <Label htmlFor="brand">Brand</Label>
-              <Input
-                id="brand"
-                value={brandQuery}
-                onChange={(e) => {
-                  setBrandQuery(e.target.value);
-                  setSelectedBrand('');
-                  setSelectedModel('');
-                  setModelQuery('');
-                  setIsBrandDropdownOpen(true);
-                }}
-                onFocus={() => setIsBrandDropdownOpen(true)}
-                placeholder="Search brand..."
-                className="mt-1"
-                autoComplete="off"
-              />
-              {isBrandDropdownOpen && filteredBrands.length > 0 && (
-                <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
-                  {filteredBrands.map((brand) => (
-                    <button
-                      key={brand}
-                      type="button"
-                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 text-gray-900"
-                      onClick={() => {
-                        setSelectedBrand(brand);
-                        setBrandQuery(brand);
-                        setSelectedModel('');
-                        setModelQuery('');
-                        setIsBrandDropdownOpen(false);
-                      }}
-                    >
-                      {brand}
-                    </button>
-                  ))}
+          <div className="space-y-5 py-4">
+            <div>
+              <Label htmlFor="vehicle-search">Search by brand or model</Label>
+              <div className="relative mt-2">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Input
+                  id="vehicle-search"
+                  placeholder="e.g., Tesla Model 3"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <p className="mt-2 text-xs text-gray-500">
+                Enter at least {MIN_SEARCH_QUERY} characters to search official EV specs.
+              </p>
+            </div>
+
+            <div className="rounded-md border bg-white">
+              {searchQuery.trim().length < MIN_SEARCH_QUERY ? (
+                <p className="p-4 text-sm text-gray-500">
+                  Keep typing to see matching vehicles.
+                </p>
+              ) : searching ? (
+                <div className="flex items-center gap-2 p-4 text-sm text-gray-600">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Searching catalogue...
                 </div>
+              ) : searchError ? (
+                <p className="p-4 text-sm text-red-600">{searchError}</p>
+              ) : searchResults.length === 0 ? (
+                <p className="p-4 text-sm text-gray-500">No vehicles match that search.</p>
+              ) : (
+                <ScrollArea className="h-60">
+                  <div className="divide-y">
+                    {searchResults.map((car) => {
+                      const isSelected = selectedCar?.id === car.id;
+                      const peakKw = car.dcMaxKW ?? car.acMaxKW ?? 0;
+                      return (
+                        <button
+                          key={car.id}
+                          type="button"
+                          onClick={() => handleSelectCar(car)}
+                          className={cn(
+                            "w-full px-4 py-3 text-left transition-colors",
+                            isSelected ? "bg-emerald-50" : "hover:bg-gray-50"
+                          )}
+                        >
+                          <p className="font-medium text-gray-900">
+                            {car.brand} {car.model}
+                            {car.variant ? (
+                              <span className="ml-2 text-xs text-gray-500">{car.variant}</span>
+                            ) : null}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {car.usableBatteryKWh} kWh • up to {peakKw.toFixed(0)} kW
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
               )}
             </div>
 
-            {/* Model */}
-            <div ref={modelRef} className="relative">
-              <Label htmlFor="model">Model</Label>
-              {!selectedBrand ? (
-                <Input
-                  id="model"
-                  disabled
-                  placeholder="Choose a brand first"
-                  className="mt-1"
-                />
-              ) : (
-                <>
-                  <Input
-                    id="model"
-                    value={modelQuery}
-                    onChange={(e) => {
-                      setModelQuery(e.target.value);
-                      setSelectedModel('');
-                      setIsModelDropdownOpen(true);
-                    }}
-                    onFocus={() => setIsModelDropdownOpen(true)}
-                    placeholder="Search model..."
-                    className="mt-1"
-                    autoComplete="off"
-                  />
-                  {isModelDropdownOpen && filteredModels.length > 0 && (
-                    <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
-                      {filteredModels.map((model) => (
-                        <button
-                          key={model}
-                          type="button"
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 text-gray-900"
-                          onClick={() => {
-                            setSelectedModel(model);
-                            setModelQuery(model);
-                            setIsModelDropdownOpen(false);
-                          }}
-                        >
-                          {model}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+            {selectedCar ? (
+              <div className="rounded-md border border-emerald-100 bg-emerald-50/70 p-4 text-sm text-emerald-900">
+                <p className="font-semibold">
+                  {selectedCar.brand} {selectedCar.model}
+                </p>
+                <p>
+                  {selectedCar.usableBatteryKWh} kWh battery •{" "}
+                  {(selectedCar.dcMaxKW ?? selectedCar.acMaxKW ?? 0).toFixed(0)} kW max charge rate
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">
+                Select a vehicle above to continue.
+              </p>
+            )}
 
             {/* Color picker */}
             <div>
-              <Label>Color</Label>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {CAR_COLORS.map((color) => (
-                  <button
-                    key={color.value}
-                    type="button"
-                    title={color.label}
-                    className={`w-8 h-8 rounded-full border-2 transition-all ${
-                      selectedColor === color.value
-                        ? 'border-blue-500 scale-110 ring-2 ring-blue-200'
-                        : 'border-gray-300 hover:border-gray-400'
-                    }`}
-                    style={{ backgroundColor: color.hex }}
-                    onClick={() => setSelectedColor(color.value)}
-                  />
-                ))}
-              </div>
-              <p className="text-xs text-gray-500 mt-1">{getColorLabel(selectedColor)}</p>
+              <Label htmlFor="color-select">Vehicle color</Label>
+              <Select value={selectedColor} onValueChange={(value: CarColorValue) => setSelectedColor(value)}>
+                <SelectTrigger id="color-select" className="mt-2">
+                  <SelectValue placeholder="Choose a color" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CAR_COLOR_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="h-3 w-3 rounded-full border border-white/40 shadow"
+                          style={{ backgroundColor: option.swatch }}
+                        />
+                        {option.label}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            {addError && (
-              <p className="text-sm text-red-500">{addError}</p>
-            )}
+            {dialogError && <p className="text-sm text-red-600">{dialogError}</p>}
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+            <Button variant="outline" onClick={() => handleDialogOpenChange(false)} disabled={saving}>
               Cancel
             </Button>
-            <Button
-              onClick={handleAddVehicle}
-              disabled={!selectedBrand || !selectedModel || adding}
-            >
-              {adding && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Add Vehicle
+            <Button onClick={handleAddVehicle} disabled={!selectedCar || saving}>
+              {saving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Plus className="mr-2 h-4 w-4" /> Save vehicle
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -407,45 +420,63 @@ export default function VehiclesScreen() {
 
 interface VehicleCardProps {
   vehicle: Vehicle;
-  onRemove: () => void;
+  onRemove: (ownershipId: string) => void | Promise<void>;
+  removing: boolean;
 }
 
-function VehicleCard({ vehicle, onRemove }: VehicleCardProps) {
+function VehicleCard({ vehicle, onRemove, removing }: VehicleCardProps) {
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div
-            className="w-5 h-5 rounded-full border border-gray-300 flex-shrink-0"
-            style={{ backgroundColor: getColorHex(vehicle.color) }}
-            title={getColorLabel(vehicle.color)}
-          />
-          <div>
-            <h3 className="text-lg font-medium text-gray-900">
-              {vehicle.brand} {vehicle.model}
-            </h3>
-            {vehicle.variant && (
-              <p className="text-sm text-gray-500">{vehicle.variant}</p>
-            )}
-          </div>
+    <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">
+            {vehicle.brand} {vehicle.model}
+          </h3>
+          <p className="text-sm text-gray-500">Added in {vehicle.year}</p>
         </div>
-        <Button onClick={onRemove} variant="outline" size="sm">
-          <Trash2 className="w-4 h-4 text-red-600" />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onRemove(vehicle.id)}
+          disabled={removing}
+          className="w-full sm:w-auto"
+        >
+          {removing ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Removing
+            </>
+          ) : (
+            <>
+              <Trash2 className="mr-2 h-4 w-4" /> Remove
+            </>
+          )}
         </Button>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="mt-6 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
         <div>
-          <p className="text-sm text-gray-500">Battery</p>
-          <p className="text-sm text-gray-900">{vehicle.usableBatteryKWh} kWh</p>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Battery</p>
+          <p className="text-base text-gray-900 font-medium">{vehicle.batteryCapacity} kWh</p>
         </div>
         <div>
-          <p className="text-sm text-gray-500">DC Max</p>
-          <p className="text-sm text-gray-900">{vehicle.dcMaxKW} kW</p>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Max charge speed</p>
+          <p className="text-base text-gray-900 font-medium">{vehicle.maxChargingSpeed} kW</p>
         </div>
         <div>
-          <p className="text-sm text-gray-500">AC Max</p>
-          <p className="text-sm text-gray-900">{vehicle.acMaxKW} kW</p>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Battery level</p>
+          <p className="text-base text-gray-900 font-medium">{vehicle.currentBatteryLevel}%</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <p className="text-xs uppercase tracking-wide text-gray-500">Color</p>
+          <div className="flex items-center gap-2">
+            <span
+              className="h-3 w-3 rounded-full border border-gray-200 shadow"
+              style={{ backgroundColor: vehicle.color }}
+            />
+            <span className="text-base text-gray-900 font-medium">
+              {formatColorLabel(vehicle.colorName)}
+            </span>
+          </div>
         </div>
       </div>
     </div>
